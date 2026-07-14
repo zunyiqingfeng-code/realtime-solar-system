@@ -1,0 +1,17 @@
+# 安全兜底：任何情况下都不提交这些
+.env
+.env.*
+*.key
+*.pem
+*.pfx
+settings.json
+STATE.md
+
+# 开发产物
+__pycache__/
+*.pyc
+export/
+renders/
+blend/
+.DS_Store
+Thumbs.db

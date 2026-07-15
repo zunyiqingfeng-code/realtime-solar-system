@@ -1,8 +1,14 @@
+<p align="center">
+  <img src="docs/screenshots/hero-banner.jpg" width="460" alt="实时太阳系">
+</p>
+
 # 实时太阳系
 
 浏览器里跑的实时太阳系。真实历表驱动的行星轨道、月球车驾驶、地面观星、火箭发射场。
 
 纯前端：零依赖、零构建、零后端。所有资产内嵌，断网可用，双击就跑。
+
+在线体验：https://zunyiqingfeng-code.github.io/realtime-solar-system/
 
 ## 四个页面
 
@@ -12,6 +18,27 @@
 | `moon.html` | 月球车：在真实月面地形数据还原的着陆区上驾驶 |
 | `sky.html` | 地面观星：从地表任意位置、任意时刻看天 |
 | `launch_site.html` | 火箭发射场：GLB 单文件场景预览 |
+
+## 预览
+
+<table>
+  <tr>
+    <td width="50%"><img src="docs/screenshots/01-solar-overview.jpg" alt="太阳系全景"><br><sub><b>太阳系全景</b> · J2000 历表驱动的开普勒轨道，行星 / 卫星 / 彗星 / 小行星带 / 航天器同框</sub></td>
+    <td width="50%"><img src="docs/screenshots/02-nearby-stars.jpg" alt="邻近恒星"><br><sub><b>邻近恒星</b> · 悬停查看光行时与实际距离，如南门二「此刻看到的光出发于 4.3 年前」</sub></td>
+  </tr>
+  <tr>
+    <td><img src="docs/screenshots/03-earth-sun-closeup.jpg" alt="日地特写"><br><sub><b>观感尺度</b> · 日、地、月、水、金同框特写，一键在真实尺度与观感尺度间切换</sub></td>
+    <td><img src="docs/screenshots/04-magnetosphere.jpg" alt="地球磁层"><br><sub><b>磁层剧场</b> · 太阳风 vs 地球磁场，Shue 经验模型实时成形，可播放 CME 风暴</sub></td>
+  </tr>
+  <tr>
+    <td><img src="docs/screenshots/05-astro-calendar.jpg" alt="天象日历"><br><sub><b>天象日历</b> · 1900–2100 的日食 / 月食 / 流星雨 / 合冲，可导出 .ics</sub></td>
+    <td><img src="docs/screenshots/06-photography-mode.jpg" alt="摄影模式"><br><sub><b>摄影模式</b> · 隐藏 UI 的干净画面，快门存图</sub></td>
+  </tr>
+  <tr>
+    <td><img src="docs/screenshots/07-ground-sky.jpg" alt="地面观星"><br><sub><b>地面观星</b> · 站在地表任意经纬度、任意时刻的天文馆视角，含星座连线与大气折射</sub></td>
+    <td><img src="docs/screenshots/08-deep-time.jpg" alt="深时星际"><br><sub><b>深时 · 星际</b> · 恒星按真实自行漂移，滚轮拉远看太阳缩成群星中的一颗黄矮星</sub></td>
+  </tr>
+</table>
 
 ## 运行
 

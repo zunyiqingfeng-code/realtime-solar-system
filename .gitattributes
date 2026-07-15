@@ -1,0 +1,9 @@
+# 统一以 LF 存库，消除跨平台 CRLF 警告
+* text=auto eol=lf
+
+# 二进制资产不做行尾转换
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.webp binary
+*.ico binary

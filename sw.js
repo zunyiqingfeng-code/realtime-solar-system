@@ -6,7 +6,7 @@
  * ========================================================================= */
 "use strict";
 
-const VER = "v38-1";                    // ← 发布新版本时,改这里
+const VER = "v39-1";                    // ← 发布新版本时,改这里
 const CACHE_PREFIX = "rt-solar-";
 const CACHE_NAME = CACHE_PREFIX + VER;
 

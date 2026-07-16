@@ -580,7 +580,7 @@
           const y = Math.round((1 - _lproj.y) * 0.5 * Hh * 2) / 2;
           if (L.lx !== x || L.ly !== y) {
             L.lx = x; L.ly = y;
-            L.el.style.transform = `translate3d(${x}px, ${y}px, 0) translate(-50%, -175%)`;
+            L.el.style.transform = `translate3d(${x}px, ${y + (L.dy || 0)}px, 0) translate(-50%, -175%)`;
           }
           const op = Math.round(L.shim.material.opacity * 50) / 50;
           if (L.lop !== op) { L.lop = op; L.el.style.opacity = op; }
@@ -674,6 +674,7 @@
         });
         const atmo = new THREE.Mesh(new THREE.SphereGeometry(1.045, 64, 48), atmoMaterial);
         posGroup.add(atmo);
+        body.atmoMesh = atmo;
       } else {
         const texKey = body.name.toLowerCase();
         const mat = new THREE.MeshStandardMaterial({
@@ -825,6 +826,7 @@
     buildRealBelt();
     buildKuiper();
     initJupiterShadows();
+    buildSiteBeacons();
     buildComets();
     buildLagrange();
     buildHeliopause();
@@ -1357,6 +1359,7 @@
    * 柯克伍德空隙 / L4L5 双营地 / Hilda 三角由真实数据自然显形。 */
   let realBeltPoints = null;
   function buildRealBelt() {
+    if (realBeltPoints) return;   // 幂等: 懒加载到货后重入
     if (typeof window === "undefined" || !window.AST_REAL || typeof atob !== "function") return;
     let f;
     try {
@@ -2731,6 +2734,9 @@
 
   let solarSysLabel = null;
   function updateLabels() {
+    const lyr = document.getElementById("labelLayer");
+    if (LNCH.state !== "off" && LNCH.state !== "load") { lyr.style.visibility = "hidden"; return; }
+    lyr.style.visibility = "";
     const show = document.getElementById("tglLabels").checked;
     const inter = star3DBlend > 0.55;   // 星际视角: 各天体标签挤成一团小字 → 坍缩为「太阳系」
     if (!solarSysLabel) {
@@ -3647,6 +3653,55 @@
     if (g.setTransform) g.setTransform(DPR3, 0, 0, DPR3, 0, 0);
     const cx2 = S / 2, cy2 = S / 2, R = S / 2 - 8;
     g.clearRect(0, 0, S, S);
+    /* —— 剧场任务视图: 发射剖面(高度 × 射程 + 分离事件 + 当前位置)—— 阶段38 用户需求 */
+    if (LNCH.state !== "off" && LNCH.state !== "load" && LNCH.table && g.beginPath) {
+      const tb = LNCH.table, last2 = tb[tb.length - 1];
+      const mD = Math.max(last2.dr, 1), mH = Math.max(last2.h * 1.15, 1);
+      const X = (d2) => 12 + (d2 / mD) * (S - 24);
+      const Y = (h2) => S - 16 - (h2 / mH) * (S - 46);
+      g.strokeStyle = "rgba(140,170,220,.25)";
+      g.lineWidth = 1;
+      g.strokeRect(12, 30, S - 24, S - 46);
+      g.fillStyle = "rgba(200,220,250,.85)";
+      g.font = "10px system-ui";
+      g.fillText(`发射剖面 · ${LNCH.cfg ? LNCH.cfg.cn : ""}`, 12, 14);
+      g.fillStyle = "rgba(160,185,225,.6)";
+      g.fillText(`射程 ${(mD / 1000).toFixed(0)} km`, S - 74, S - 4);
+      g.fillText(`高 ${(mH / 1000).toFixed(0)} km`, 12, 27);
+      g.strokeStyle = "rgba(120,200,255,.7)";
+      g.lineWidth = 1.6;
+      g.beginPath();
+      for (let i2 = 0; i2 < tb.length; i2 += 2) {
+        const p2 = tb[i2];
+        if (i2 === 0) g.moveTo(X(p2.dr), Y(p2.h)); else g.lineTo(X(p2.dr), Y(p2.h));
+      }
+      g.stroke();
+      if (LNCH.cfg && LNCH.cfg.events) {
+        g.fillStyle = "rgba(255,210,140,.9)";
+        for (const ev2 of LNCH.cfg.events) {
+          let bi2 = 0;
+          while (bi2 < tb.length - 1 && tb[bi2].t < ev2.t) bi2 += 1;
+          g.beginPath();
+          g.arc(X(tb[bi2].dr), Y(tb[bi2].h), 2.4, 0, Math.PI * 2);
+          g.fill();
+        }
+      }
+      const q2 = { h: 0, dr: 0 };
+      lnchTableAt(Math.min(LNCH.t, last2.t), q2);
+      g.fillStyle = "#9fe8d8";
+      g.beginPath();
+      g.arc(X(q2.dr), Y(q2.h), 3.6, 0, Math.PI * 2);
+      g.fill();
+      g.strokeStyle = "rgba(159,232,216,.5)";
+      g.lineWidth = 1;
+      g.beginPath();
+      g.moveTo(X(q2.dr), Y(q2.h));
+      g.lineTo(X(q2.dr), S - 16);
+      g.stroke();
+      g.fillStyle = "rgba(200,220,250,.8)";
+      g.fillText(`T+${Math.max(LNCH.t, 0).toFixed(0)}s  h=${(q2.h / 1000).toFixed(1)}km  dr=${(q2.dr / 1000).toFixed(0)}km`, 12, S - 4);
+      return;
+    }
     g.drawImage(RADAR.static, 0, 0, S, S);
     // 扫描线 + 余辉扇区
     RADAR.sweep = (RADAR.sweep + dt * 0.9) % (Math.PI * 2);
@@ -3748,18 +3803,1162 @@
     return best;
   }
 
+  /* ================= 阶段29/30 · 发射剧场: 多火箭注册表 =================
+   * 配置驱动: 物理(分级推质/俯仰程序/制导关机)、分离编排、羽流相位、时间压缩、发射场全参数化。
+   * 长征五号(文昌·带场地GLB) / 泰坦IIIE-半人马(LC-41·旅行者史实座驾) / 土星五号(LC-39A·阿波罗11)。 */
+  const ROCKETS = {
+    cz5: {
+      cn: "长征五号", glbKey: "CZ5_GLB", file: "cz5_glb.js", hasSite: true, satDrift: true,
+      site: { lat: 19.6145, lon: 110.9510 }, az: 52.6, twr: [1.15, 1.35], inc: 41.5,
+      phys: { m0: 849e3, targetVrot: 7480, tEnd: 552,
+        stages: [
+          { t0: 0, t1: 173, Fsl: 9593e3, Fvac: 10716e3, mdot: 3283.24, drop: 48e3 },
+          { t0: 0, t1: 540, Fsl: 1020e3, Fvac: 1400e3, mdot: 325.93, drop: 0 }
+        ],
+        jett: [{ t: 227, m: 3e3 }],
+        pitch: [[0, 90], [12, 90], [100, 35], [173, 11.5], [540, 0.05]] },
+      events: [
+        { t: 173, parts: ["booster1", "booster2", "booster3", "booster4"], mode: "radial", label: "助推器分离" },
+        { t: 227, parts: ["fairing"], mode: "up", label: "整流罩分离 · 载荷见光", reveal: true }
+      ],
+      plume: [{ t0: 0, t1: 173, y: 1.6, s: 1.0, col: 0xffa040 }, { t0: 173, t1: 540, y: 1.6, s: 0.8, col: 0xd8e6ff }],
+      tc: [[20, 4], [165, 12], [230, 8], [1e9, 16]] },
+    titan3e: {
+      cn: "泰坦IIIE·半人马", glbKey: "T3E_GLB", file: "t3e_glb.js",
+      site: { lat: 28.5833, lon: -80.5831 }, az: 93, twr: [1.5, 1.9], inc: 28.7,
+      phys: { m0: 632970, targetVrot: 7390, tEnd: 780,
+        stages: [
+          { t0: 0, t1: 115, Fsl: 10.6e6, Fvac: 11.2e6, mdot: 3346.7, drop: 67596, taper: 0.42 },
+          { t0: 112, t1: 258, Fsl: 1.94e6, Fvac: 2.34e6, mdot: 773.97, drop: 6000 },
+          { t0: 258, t1: 468, Fsl: 4.58e5, Fvac: 4.58e5, mdot: 135.3, drop: 2653, dropT: 486 },
+          { t0: 496, t1: 780, Fsl: 1.334e5, Fvac: 1.334e5, mdot: 30.6, drop: 0 }
+        ],
+        jett: [{ t: 269, m: 4000 }],
+        pitch: [[0, 90], [10, 90], [75, 40], [120, 24], [258, 9], [468, 2], [780, 0]] },
+      events: [
+        { t: 124, parts: ["booster1", "booster2"], mode: "radial", label: "固体助推抛离" },
+        { t: 258, parts: ["core_stage1"], mode: "back", label: "芯一级分离(热分级)" },
+        { t: 269, parts: ["fairing"], mode: "up", label: "抛整流罩 · 半人马见光", reveal: true },
+        { t: 486, parts: ["core_stage2"], mode: "back", label: "泰坦/半人马分离 · RL10 点火" }
+      ],
+      plume: [
+        { t0: 0, t1: 115, y: 0.4, s: 1.5, col: 0xe8c8a0 }, { t0: 112, t1: 258, y: 0.8, s: 0.8, col: 0xd9925a },
+        { t0: 258, t1: 468, y: 22.9, s: 0.6, col: 0xd9925a }, { t0: 496, t1: 1e9, y: 32.9, s: 0.45, col: 0xcfe0ff }
+      ],
+      tc: [[18, 4], [110, 10], [280, 8], [500, 14], [1e9, 16]] },
+    saturn5: {
+      cn: "土星五号", glbKey: "S5_GLB", file: "s5_glb.js",
+      site: { lat: 28.6083, lon: -80.6044 }, az: 72.058, twr: [1.08, 1.28], inc: 33.0,
+      phys: { m0: 2938315, targetVrot: 7395, tEnd: 900,
+        stages: [
+          { t0: 0, t1: 161.6, Fsl: 33.7e6, Fvac: 38.7e6, mdot: 13278, drop: 130400 },
+          { t0: 166, t1: 550, Fsl: 5.1e6, Fvac: 5.1e6, mdot: 1154, drop: 39900 },
+          { t0: 554, t1: 900, Fsl: 1.03e6, Fvac: 1.03e6, mdot: 247.6, drop: 0 }
+        ],
+        jett: [{ t: 192.3, m: 5200 }, { t: 197.9, m: 4040 }],
+        pitch: [[0, 90], [13, 90], [83, 56], [161, 34], [300, 15], [550, 4], [900, 0]] },
+      events: [
+        { t: 161.6, parts: ["core_stage1"], mode: "back", label: "S-IC 一级分离" },
+        { t: 192.3, parts: ["interstage"], mode: "back", label: "级间环抛离" },
+        { t: 197.9, parts: ["fairing"], mode: "up", label: "逃逸塔抛弃" },
+        { t: 550, parts: ["core_stage2"], mode: "back", label: "S-II 二级分离 · S-IVB 点火" }
+      ],
+      plume: [
+        { t0: 0, t1: 161.6, y: 0.2, s: 2.3, col: 0xffa040 }, { t0: 166, t1: 550, y: 44, s: 1.0, col: 0xcfe0ff },
+        { t0: 554, t1: 1e9, y: 71, s: 0.7, col: 0xcfe0ff }
+      ],
+      tc: [[25, 4], [155, 13], [230, 8], [545, 16], [1e9, 18]] },
+    falcon9: {
+      cn: "猎鹰9号", glbKey: "F9_GLB", file: "f9_glb.js",
+      site: { lat: 28.56194, lon: -80.57722 }, az: 90, twr: [1.3, 1.52], inc: 28.5, satDrift: true,
+      phys: { m0: 549054, targetVrot: 7420, tEnd: 560,
+        stages: [
+          { t0: 0, t1: 132, Fsl: 7607e3, Fvac: 8227e3, mdot: 2442, drop: 101000 },
+          { t0: 136, t1: 560, Fsl: 934e3, Fvac: 934e3, mdot: 273.6, drop: 0 }
+        ],
+        jett: [{ t: 178, m: 1900 }],
+        pitch: [[0, 90], [10, 90], [70, 48], [132, 30], [510, 1], [560, 0]] },
+      events: [
+        { t: 132, parts: ["core_stage1"], mode: "back", label: "一级分离 · 开始返航" },
+        { t: 178, parts: ["fairing"], mode: "up", label: "抛整流罩", reveal: true }
+      ],
+      plume: [{ t0: 0, t1: 132, y: 0.4, s: 1.2, col: 0xffa040 }, { t0: 136, t1: 1e9, y: 47.3, s: 0.55, col: 0xffb060 }],
+      booster: { sepT: 132, lzDr: -3200, opts: { gp: 2700 } },
+      tc: [[20, 4], [125, 12], [200, 8], [1e9, 14]] },
+    n1: {
+      cn: "N1 登月火箭", glbKey: "N1_GLB", file: "n1_glb.js",
+      site: { lat: 45.9647, lon: 63.3049 }, az: 62.7, twr: [1.5, 1.8], inc: 51.8, satDrift: true,
+      failT: 68.7, failLabel: "T+68.7 · KORD 切断全部三十台发动机", failElegy: "史实四射四败, N1 从未入轨。但没有它, 就没有后来的一切 —— 献给所有未竟之志。",
+      phys: { m0: 2750e3, targetVrot: 7640, tEnd: 620, cutAfter: 245,
+        stages: [
+          { t0: 0, t1: 120, Fsl: 45e6, Fvac: 49e6, mdot: 15450, drop: 180800, taper: 0.25 },
+          { t0: 120, t1: 230, Fsl: 14.04e6, Fvac: 14.04e6, mdot: 4325, drop: 52200 },
+          { t0: 234, t1: 620, Fsl: 4.05e6, Fvac: 4.05e6, mdot: 1274, drop: 0 }
+        ],
+        jett: [{ t: 140, m: 5500 }],
+        pitch: [[0, 90], [8, 90], [60, 44], [120, 22], [230, 6], [320, 0.3], [620, 0]] },
+      events: [
+        { t: 120, parts: ["core_stage1"], mode: "back", label: "Block A 热分级" },
+        { t: 140, parts: ["fairing"], mode: "up", label: "抛逃逸塔与整流罩", reveal: true },
+        { t: 230, parts: ["core_stage2"], mode: "back", label: "Block B 分离" }
+      ],
+      plume: [{ t0: 0, t1: 120, y: 0.3, s: 2.4, col: 0xffa040 }, { t0: 120, t1: 230, y: 30, s: 1.0, col: 0xffa040 }, { t0: 234, t1: 1e9, y: 50.5, s: 0.6, col: 0xffb060 }],
+      tc: [[18, 4], [115, 12], [245, 8], [1e9, 15]] },
+    exp1: {
+      cn: "远征者一号", glbKey: "EXP1_GLB", file: "exp1_glb.js",
+      site: { lat: 19.62, lon: 110.96 }, az: 95, twr: [1.35, 1.65], inc: 19.7, satDrift: true,
+      phys: { m0: 420e3, targetVrot: 7405, tEnd: 520,
+        stages: [
+          { t0: 0, t1: 150, Fsl: 6.2e6, Fvac: 6.9e6, mdot: 1933, drop: 18e3 },
+          { t0: 154, t1: 505, Fsl: 1.05e6, Fvac: 1.05e6, mdot: 250, drop: 0 }
+        ],
+        jett: [{ t: 185, m: 2000 }],
+        pitch: [[0, 90], [10, 90], [75, 42], [150, 16], [505, 0.5], [520, 0]] },
+      events: [
+        { t: 150, parts: ["core_stage1"], mode: "back", label: "一级分离" },
+        { t: 185, parts: ["fairing"], mode: "up", label: "抛整流罩", reveal: true }
+      ],
+      plume: [{ t0: 0, t1: 150, y: 0.3, s: 1.1, col: 0xaef0e8 }, { t0: 154, t1: 1e9, y: 34, s: 0.5, col: 0xaef0e8 }],
+      tc: [[18, 4], [145, 12], [200, 8], [1e9, 14]] },
+    starship: {
+      cn: "星舰", glbKey: "SS_GLB", file: "ss_glb.js",
+      site: { lat: 25.9972, lon: -97.1560 }, az: 93, twr: [1.4, 1.62], inc: 26.2,
+      phys: { m0: 5175e3, targetVrot: 7420, tEnd: 560,
+        stages: [
+          { t0: 0, t1: 100, Fsl: 74.4e6, Fvac: 76e6, mdot: 21384, drop: 0 },
+          { t0: 100, t1: 159, Fsl: 45e6, Fvac: 46e6, mdot: 13000, drop: 770e3 },   // 节流段(真实 throttle bucket)
+          { t0: 163, t1: 560, Fsl: 14.2e6, Fvac: 14.2e6, mdot: 3810, drop: 0 }
+        ],
+        jett: [],
+        pitch: [[0, 90], [12, 90], [75, 66], [159, 47], [320, 4], [478, 0.5], [560, 0]] },
+      events: [
+        { t: 159, parts: ["core_stage1"], mode: "back", label: "热分级 · 超重开始返航" }
+      ],
+      booster: { sepT: 159, lzDr: 18, catchH: 62,
+        opts: { FE: 2.3e6, MD: 620, dry: 275e3, prop: 440e3, bbN: 13, enN: 13, bbFloor: 190e3, enFloor: 95e3, CdA: 500, catchH: 62, os: 0.75, ldMax: 13, gH: 48000, gp: 1050, gd: 14, gLim: 10, gK: 0.9, p4: 0.006, p4h: 200, p4L: 12 } },
+      plume: [{ t0: 0, t1: 159, y: 0.4, s: 2.6, col: 0xb9d0ff }, { t0: 163, t1: 1e9, y: 69, s: 1.0, col: 0xb9d0ff }],
+      tc: [[22, 4], [152, 12], [230, 8], [1e9, 15]] }
+  };
+  const LNCH = {
+    state: "off", t: 0, wall: 0, rk: "cz5", cfg: null, builtMap: {},
+    W: null, rocket: null, parts: null, plume: null, plumeCore: null, smoke: null, dome: null, ground: null, sat: null,
+    table: null, sep: {}, evFired: [], skipReq: false, savedNear: 0.05, hist: false, chain: null,
+    lat: 19.6145, lon: 110.9510, incAz: 52.6 * Math.PI / 180, axis: [0, 0, 1]
+  };
+  /* ---------------- 发射场常驻地标: 七站信标 + 标签 + 点击进剧场 ---------------- */
+  const SITES = [
+    { id: "cz5", row: 0, nm: "site_cz5", cn: "文昌航天发射场", lat: 19.6145, lon: 110.9510 },
+    { id: "titan3e", row: 0, nm: "site_t3e", cn: "卡纳维拉尔 LC-41", lat: 28.5833, lon: -80.5831 },
+    { id: "saturn5", row: 1, nm: "site_s5", cn: "肯尼迪 LC-39A", lat: 28.6083, lon: -80.6044 },
+    { id: "falcon9", row: 2, nm: "site_f9", cn: "卡纳维拉尔 SLC-40", lat: 28.56194, lon: -80.57722 },
+    { id: "n1", row: 0, nm: "site_n1", cn: "拜科努尔 110 工位", lat: 45.9647, lon: 63.3049 },
+    { id: "starship", row: 0, nm: "site_ss", cn: "星舰基地 Starbase", lat: 25.9972, lon: -97.1560 },
+    { id: "exp1", row: 1, nm: "site_x", cn: "文昌二号工位", lat: 19.62, lon: 110.96 }
+  ];
+  let siteBeacons = null;
+  function buildSiteBeacons() {
+    siteBeacons = [];
+    for (const st of SITES) {
+      CN[st.nm] = st.cn;
+      ACCENT[st.nm] = "#9fe8d8";
+      const spr = new THREE.Sprite(new THREE.SpriteMaterial({
+        map: makeProbeTexture(), color: 0x9fe8d8, transparent: true, opacity: 0.8,
+        blending: THREE.AdditiveBlending, depthWrite: false, sizeAttenuation: false
+      }));
+      spr.scale.set(0.012, 0.012, 1);
+      spr.frustumCulled = false;
+      spr.renderOrder = 4;
+      spr.visible = false;
+      scene.add(spr);
+      const pick = new THREE.Mesh(new THREE.SphereGeometry(1, 8, 6), new THREE.MeshBasicMaterial({
+        transparent: true, opacity: 0, depthWrite: false, depthTest: false, colorWrite: false
+      }));
+      pick.userData.bodyName = st.nm;
+      pick.visible = false;
+      scene.add(pick);
+      pickMeshes.push(pick);
+      const label = makeLabel(st.nm);
+      labels2D[labels2D.length - 1].dy = (st.row || 0) * 13;   // 相邻站屏幕错行(文昌双站/卡角三站, 显式行号)
+      label.scale.set(0.06, 0.015, 1);
+      label.visible = false;
+      scene.add(label);
+      labels[st.nm] = label;
+      siteBeacons.push({ idx: siteBeacons.length, st, spr, pick, label });
+    }
+  }
+  const _sbD = [0, 0, 0, 0, 0, 1];
+  function updateSiteBeacons() {
+    if (!siteBeacons) return;
+    const eS = scenePos.Earth;
+    const Rbu = 6371 / SCALE.sceneUnitKm;
+    let camD = 1e18;
+    if (eS) camD = Math.hypot(camera.position.x - eS[0], camera.position.y - eS[1], camera.position.z - eS[2]);
+    const near = eS ? clamp((Rbu * 60 - camD) / (Rbu * 40), 0, 1) : 0;
+    const show = eS && scaleBlend < 0.3 && star3DBlend < 0.4 && LNCH.state === "off" && near > 0.02;
+    const showLb = show && document.getElementById("tglLabels").checked;
+    for (const b of siteBeacons) {
+      if (!show) { b.spr.visible = false; b.label.visible = false; b.pick.visible = false; continue; }
+      geoDirEcl(b.st.lat, b.st.lon, _sbD);
+      const cx = (camera.position.x - eS[0]) / camD, cy = (camera.position.y - eS[1]) / camD, cz = (camera.position.z - eS[2]) / camD;
+      /* 几何地平线: 有限视距下站点可见 ⇔ dot > R/camD(否则贴轮廓后侧的站会穿透地球显示) */
+      const front = (_sbD[0] * cx + _sbD[1] * cy + _sbD[2] * cz) > Math.max(Rbu / camD * 0.98, 0.02);
+      b.spr.visible = front;
+      b.label.visible = front && showLb;
+      b.pick.visible = front;
+      if (!front) continue;
+      b.spr.position.set(eS[0] + _sbD[0] * Rbu * 1.004, eS[1] + _sbD[1] * Rbu * 1.004, eS[2] + _sbD[2] * Rbu * 1.004);
+      b.pick.position.copy(b.spr.position);
+      b.pick.scale.setScalar(Rbu * 0.06);
+      b.label.position.set(eS[0] + _sbD[0] * Rbu * 1.06, eS[1] + _sbD[1] * Rbu * 1.06, eS[2] + _sbD[2] * Rbu * 1.06);
+      b.spr.material.opacity = 0.3 + 0.6 * near;
+      b.label.material.opacity = 0.85 * near;
+    }
+  }
+  /* ---------------- 阿波罗任务链: 停泊轨道(解析二体) → TLI 奔月 → 抵月深链月面 ----------------
+   * 工程注记: N 体积分器步长下限 30s 为行际巡航设计, LEO 多圈停泊会数值发散;
+   * 停泊轨道本就是二体问题 → 解析圆轨精确推进(每帧直写 p.r/p.v/p.jd, 积分器零 gap 自动让位),
+   * TLI 点火后才交给 N 体。月球引力未单独建模(地月合并 GM), 抵月判据为几何交会 <6.6 万 km(≈影响球)。 */
+  const APOLLO = { on: false, p: null, state: "", minMoon: 1e12, kep: null };
+  const _tliT = [0, 0, 0], _apE = [0, 0, 0], _apEv = [0, 0, 0], _apM = [0, 0, 0];
+  function earthStateKm(jdX, outR, outV) {   // 与渲染同源: EMB − μ·月矢量; 速度=中心差分
+    const e1 = heliocentricKm(bodyByName.Earth.orbit_j2000, jdX + 0.005);
+    const e0 = heliocentricKm(bodyByName.Earth.orbit_j2000, jdX - 0.005);
+    moonGeoKm(jdX, _apM);
+    const eC = heliocentricKm(bodyByName.Earth.orbit_j2000, jdX);
+    outR[0] = eC[0] - _apM[0] * MU_MOON; outR[1] = eC[1] - _apM[1] * MU_MOON; outR[2] = eC[2] - _apM[2] * MU_MOON;
+    outV[0] = (e1[0] - e0[0]) / 864; outV[1] = (e1[1] - e0[1]) / 864; outV[2] = (e1[2] - e0[2]) / 864;
+  }
+  function tliTofA(rp, aT, rm) {   // 椭圆从近地点到月球轨道半径的飞行时间(秒)
+    const MU = 398600.4418, RM = rm || 384400;
+    const e = 1 - rp / aT;
+    const cosE = clamp((1 - RM / aT) / e, -1, 1);
+    const E = Math.acos(cosE);
+    return (E - e * Math.sin(E)) * Math.sqrt(aT * aT * aT / MU);
+  }
+  function tliSolve(rp, rm) {   // 求 aT 使近地点→月球真距飞行时间 ≈ 3.05 天(TOF 随 aT 单调递减)
+    let lo = ((rm || 384400) + rp) / 2 * 1.0005, hi = 2.5e6;   // 下界: 远地点须够到月距
+    for (let i = 0; i < 40; i += 1) {
+      const mid = (lo + hi) / 2;
+      if (tliTofA(rp, mid, rm) > 3.05 * 86400) lo = mid; else hi = mid;
+    }
+    return (lo + hi) / 2;
+  }
+  function apolloStart(p) {   // 交棒时以当帧探针态建立解析停泊轨道基
+    earthStateKm(jd, _apE, _apEv);
+    const rx = p.r[0] - _apE[0], ry = p.r[1] - _apE[1], rz = p.r[2] - _apE[2];
+    const R = Math.hypot(rx, ry, rz);
+    const e1 = [rx / R, ry / R, rz / R];
+    let vx = p.v[0] - _apEv[0], vy = p.v[1] - _apEv[1], vz = p.v[2] - _apEv[2];
+    const dot = vx * e1[0] + vy * e1[1] + vz * e1[2];
+    vx -= dot * e1[0]; vy -= dot * e1[1]; vz -= dot * e1[2];   // 去径向: 近圆化
+    /* 发射窗口物理: 史实 TLI 窗口 = 停泊轨道面含点火后 3.05 天的月球位置。
+     * 剧场入轨面由 ERA+方位角近似史实, 此处将面精确旋齐目标(等效于窗口微调), 出面误差归零 */
+    moonGeoKm(jd + 3.05, _tliT);
+    const mdot = _tliT[0] * e1[0] + _tliT[1] * e1[1] + _tliT[2] * e1[2];
+    let wx = _tliT[0] - mdot * e1[0], wy = _tliT[1] - mdot * e1[1], wz = _tliT[2] - mdot * e1[2];
+    const wl = Math.hypot(wx, wy, wz);
+    if (wl > 1e4 && (wx * vx + wy * vy + wz * vz) !== 0) {   // 非退化: 用含月面基替代
+      if (wx * vx + wy * vy + wz * vz < 0) { wx = -wx; wy = -wy; wz = -wz; }   // 保顺行
+      vx = wx; vy = wy; vz = wz;
+    }
+    const vT = Math.hypot(vx, vy, vz) || 1;
+    APOLLO.on = true; APOLLO.p = p; APOLLO.state = "coast"; APOLLO.minMoon = 1e12;
+    APOLLO.kep = { jd0: jd, R, w: Math.sqrt(398600.4418 / (R * R * R)), e1, e2: [vx / vT, vy / vT, vz / vT] };
+  }
+  function tickApollo() {
+    if (!APOLLO.on || !APOLLO.p) return;
+    const p = APOLLO.p;
+    if (probes.indexOf(p) < 0) { APOLLO.on = false; return; }
+    if (APOLLO.state === "coast") {
+      const K = APOLLO.kep;
+      earthStateKm(jd, _apE, _apEv);
+      const th = K.w * (jd - K.jd0) * 86400;
+      const c = Math.cos(th), sn = Math.sin(th);
+      const vC = K.w * K.R;   // 圆轨速度 km/s
+      const ex = c * K.e1[0] + sn * K.e2[0], ey = c * K.e1[1] + sn * K.e2[1], ez = c * K.e1[2] + sn * K.e2[2];
+      const tx = -sn * K.e1[0] + c * K.e2[0], ty = -sn * K.e1[1] + c * K.e2[1], tz = -sn * K.e1[2] + c * K.e2[2];
+      p.r[0] = _apE[0] + K.R * ex; p.r[1] = _apE[1] + K.R * ey; p.r[2] = _apE[2] + K.R * ez;
+      p.v[0] = _apEv[0] + vC * tx; p.v[1] = _apEv[1] + vC * ty; p.v[2] = _apEv[2] + vC * tz;
+      p.jd = jd;   // 积分器零 gap → 解析层独占推进
+      moonGeoKm(jd + 3.05, _tliT);
+      const tl = Math.hypot(_tliT[0], _tliT[1], _tliT[2]) || 1;
+      // 面已含目标(apolloStart 窗口对齐) → 对跖判据即相位判据
+      const cosR = (ex * _tliT[0] + ey * _tliT[1] + ez * _tliT[2]) / tl;
+      if (cosR < -0.9945) {   // 探针位于未来月球对跖点 ±6° → 近地点点火, 远地点正打月球
+        const aT = tliSolve(K.R, tl);
+        const vNew = Math.sqrt(398600.4418 * (2 / K.R - 1 / aT));
+        APOLLO.dv = vNew - vC;
+        p.v[0] = _apEv[0] + vNew * tx; p.v[1] = _apEv[1] + vNew * ty; p.v[2] = _apEv[2] + vNew * tz;
+        /* 转移椭圆根数: 近地点=点火点; 跨月段解析推进(月球引力未建, 二体椭圆即该模型的精确解) */
+        APOLLO.ell = { jd0: jd, aT, e: 1 - K.R / aT, P: [ex, ey, ez], Q: [tx, ty, tz] };
+        APOLLO.tliJd = jd;
+        APOLLO.state = "cruise";
+        sfxRumble();
+        $("hohmannStatus").innerHTML = `TLI 奔月点火 · Δv ${APOLLO.dv.toFixed(2)} km/s · 跨月约 3 天 <button id="apSpdBtn">加速: 时/秒 ▶</button>`;
+      }
+    } else if (APOLLO.state === "cruise") {
+      earthStateKm(jd, _apE, _apEv);
+      const EL = APOLLO.ell;
+      if (EL && jd >= EL.jd0) {
+        const MU = 398600.4418;
+        const n = Math.sqrt(MU / (EL.aT * EL.aT * EL.aT));
+        const M = n * (jd - EL.jd0) * 86400;
+        if (M < Math.PI * 1.9) {   // 远地点后不再解析(交还 N 体)
+          let E = M;
+          for (let it = 0; it < 12; it += 1) E = E - (E - EL.e * Math.sin(E) - M) / (1 - EL.e * Math.cos(E));
+          const cE = Math.cos(E), sE = Math.sin(E);
+          const rr = EL.aT * (1 - EL.e * cE);
+          const b = EL.aT * Math.sqrt(1 - EL.e * EL.e);
+          const xw = EL.aT * (cE - EL.e), yw = b * sE;
+          const dE = n * EL.aT / rr;   // dE/dt · aT = 视半径速率因子
+          const vxw = -EL.aT * sE * dE, vyw = b * cE * dE;
+          p.r[0] = _apE[0] + xw * EL.P[0] + yw * EL.Q[0];
+          p.r[1] = _apE[1] + xw * EL.P[1] + yw * EL.Q[1];
+          p.r[2] = _apE[2] + xw * EL.P[2] + yw * EL.Q[2];
+          p.v[0] = _apEv[0] + vxw * EL.P[0] + vyw * EL.Q[0];
+          p.v[1] = _apEv[1] + vxw * EL.P[1] + vyw * EL.Q[1];
+          p.v[2] = _apEv[2] + vxw * EL.P[2] + vyw * EL.Q[2];
+          p.jd = jd;
+        } else { APOLLO.ell = null; }   // 之后 N 体接管(远域步长安全)
+      }
+      moonGeoKm(jd, _apM);
+      const mx = _apE[0] + _apM[0] * (1 - MU_MOON), my = _apE[1] + _apM[1] * (1 - MU_MOON), mz = _apE[2] + _apM[2] * (1 - MU_MOON);
+      const d = Math.hypot(p.r[0] - mx, p.r[1] - my, p.r[2] - mz);
+      if (d < APOLLO.minMoon) APOLLO.minMoon = d;
+      if (d < 66000) {
+        APOLLO.state = "arrived";
+        APOLLO.on = false;
+        award("apollo_moon");
+        sfxChime();
+        $("hohmannStatus").innerHTML = `抵达月球影响球 · 距月 ${(d / 1e4).toFixed(1)} 万 km <button id="apolloMoonBtn">降落静海 · 开月球车 →</button>`;
+      } else if (jd - (APOLLO.tliJd || jd) > 2.5 && d > APOLLO.minMoon * 3 && APOLLO.minMoon < 4e5) {   // 时间闸: 设计 TOF 3.05d, 中途月球路过的假接近不判脱靶
+        APOLLO.state = "missed";
+        APOLLO.on = false;
+        $("hohmannStatus").innerHTML = `掠月而过, 最近 ${(APOLLO.minMoon / 1e4).toFixed(1)} 万 km —— 史实靠中途修正收窄, 一击版差了口气`;
+      }
+    }
+  }
+
+  /* ---------------- 时间偶遇: 时间轴扫过历史发射 ±30 分钟 ---------------- */
+  const ENC_EPOCHS = [
+    { jd: 2457696.03, rocket: "cz5", label: "长征五号首飞正在文昌点火" },
+    { jd: 2440419.064, rocket: "saturn5", apollo: true, label: "阿波罗11 正离开 LC-39A" },
+    { jd: 2440273.888, rocket: "n1", historical: true, label: "N1 首飞 —— 68 秒后成为历史" },
+    { jd: 2443376.10, rocket: "titan3e", chain: "Voyager2", label: "旅行者2号正离开 LC-41" },
+    { jd: 2460597.02, rocket: "starship", label: "星舰第五飞 · 筷子首捕即将上演" }
+  ];
+  const encSeen = {};
+  let encCur = null;
+  function checkEncounter(force) {
+    const eligible = force || (LNCH.state === "off" && !(typeof CINEMA !== "undefined" && CINEMA.on) && selectedName === "Earth");
+    if (!eligible) {
+      if (encCur) { encCur = null; $("encHint").classList.remove("show"); }
+      return null;
+    }
+    for (const e of ENC_EPOCHS) {
+      if (Math.abs(jd - e.jd) < 0.021 && !encSeen[e.jd]) {
+        if (encCur !== e) {
+          encCur = e;
+          $("encText").textContent = `此刻: ${e.label}`;
+          $("encHint").classList.add("show");
+        }
+        return e;
+      }
+    }
+    if (encCur) { encCur = null; $("encHint").classList.remove("show"); }
+    return null;
+  }
+  function ascentTable(ph) {
+    // 参数化质点上升: 分级推质 + 高度推力插值 + 可选推力衰减(固推) + 离心减重 + 制导关机
+    const R = 6371e3, g0 = 9.80665;
+    let m = ph.m0, h = 0, v = 0, dr = 0, cut = false, tCut = 0;
+    const out = [];
+    const dt = 0.25;
+    const drops = ph.stages.map((st) => ({ t: st.dropT || st.t1, m: st.drop || 0 })).concat(ph.jett || []);
+    const done = drops.map(() => false);
+    for (let t = 0; t <= ph.tEnd; t += dt) {
+      for (let i = 0; i < drops.length; i += 1) {
+        if (!done[i] && t >= drops[i].t) { m -= drops[i].m; done[i] = true; }
+      }
+      const k = clamp(h / 45000, 0, 1);
+      let F = 0, md = 0;
+      if (!cut) {
+        for (const st of ph.stages) {
+          if (t >= st.t0 && t < st.t1) {
+            let f = lerp(st.Fsl, st.Fvac, k);
+            if (st.taper) f *= 1 - st.taper * (t - st.t0) / (st.t1 - st.t0);
+            F += f; md += st.mdot;
+          }
+        }
+        if (t > (ph.cutAfter || ph.tEnd * 0.55) && v >= ph.targetVrot) { cut = true; tCut = t; F = 0; md = 0; }
+      }
+      const P = ph.pitch;
+      let pitch = P[P.length - 1][1];
+      for (let i = 0; i < P.length - 1; i += 1) {
+        if (t >= P[i][0] && t <= P[i + 1][0]) { pitch = lerp(P[i][1], P[i + 1][1], (t - P[i][0]) / (P[i + 1][0] - P[i][0] || 1)); break; }
+      }
+      pitch *= D2R;
+      const geff = Math.max(g0 * Math.pow(R / (R + h), 2) - Math.pow(v * Math.cos(pitch), 2) / (R + h), 0);
+      v += (F / m - geff * Math.sin(pitch)) * dt;
+      if (v < 0) v = 0;
+      h += v * Math.sin(pitch) * dt;
+      dr += v * Math.cos(pitch) * dt;
+      m -= md * dt;
+      if (Math.round(t / dt) % 4 === 0) out.push({ t, h, v, dr, pitch, m, F });
+    }
+    out.tCut = cut ? tCut : 0;
+    return out;
+  }
+  function f9BoosterTable(ascTb, sepT, lzDr, opts) {
+    const LZ = lzDr || -3200;
+    const O = opts || {};
+    const CATCH = O.catchH || 0;   // 捕获高度(星舰回塔被夹); 0 = 落地
+    // 猎鹰9 一级 RTLS: 分离状态起算, 二维分量积分(下航程 x / 高度 y)
+    // 阶段: 0滑行翻转 → 1返航点火(3机) → 2/25再入 → 3气动减速(栅格舵) → 4着陆点火(1机) → 5触地
+    const g0 = 9.80665, R = 6371e3;
+    const s0 = ascTb[clamp(Math.round(sepT), 0, ascTb.length - 1)];
+    let h = s0.h, dr = s0.dr;
+    let vx = s0.v * Math.cos(s0.pitch), vy = s0.v * Math.sin(s0.pitch);
+    let m = (O.dry || 27600) + (O.prop || 55000);
+    const FE1 = O.FE || 914e3, MD1 = O.MD || 293;
+    const CdA = O.CdA || 13.8;
+    const nBB = O.bbN || 3, nEN = O.enN || 3;
+    const rows = [];
+    let phase = 0, t = sepT, prop = O.prop || 55000;
+    let touchdown = 0;
+    let lastPush = -9;
+    for (let i = 0; i < 11000 && !touchdown; i += 1) {
+      const dt = phase >= 4 ? 0.0625 : 0.25;
+      t += dt;
+      let F = 0, ax = 0, ay = 0;
+      const g = g0 * Math.pow(R / (R + h), 2);
+      if (phase === 0 && t >= sepT + 12) phase = 1;
+      if (phase === 1) {
+        F = 3 * FE1;
+        const need = -(dr / 171) * 1.5;   // 过冲补偿再入反推的水平损耗
+        if (vx <= need || prop < 12500) { phase = 2; }
+        else { ax = -F / m; m -= 3 * MD1 * dt; prop -= 3 * MD1 * dt; }
+      }
+      if (m < (O.dry || 27600)) m = (O.dry || 27600);
+      if (prop < 0) prop = 0;
+      if (phase === 2 && h < 54000 && vy < 0) phase = 25;
+      if (phase === 25) {
+        const vv = Math.hypot(vx, vy) || 1;
+        if (prop > 6800 && vv > 500 && h > 36000) {
+          F = 3 * FE1;
+          ax = -F / m * vx / vv; ay = -F / m * vy / vv;
+          m -= 3 * MD1 * dt; prop -= 3 * MD1 * dt;
+        } else phase = 3;
+      }
+      if (phase === 3 || phase === 2) {
+        const rho = 1.225 * Math.exp(-h / 8500);
+        const vv = Math.hypot(vx, vy) || 1;
+        const ad = 0.5 * rho * vv * vv * CdA / m;
+        ax += -ad * vx / vv; ay += -ad * vy / vv;
+        if (phase === 3 && h < (O.gH || 34000)) ax += clamp(-((dr - LZ) / (O.gp || 2400) + (O.gd ? vx / O.gd : 0)), -(O.gLim || 9), O.gLim || 9) * (O.gK || 0.85);   // PD 导引(按箭参数化)
+        const aNet = (O.ldMax || 3) * FE1 * 0.85 / m - g;   // 刹车距离按可并机上限估算
+        if (phase === 3 && vy < 0 && h - CATCH < 9000 && h - CATCH < (vy * vy) / (2 * Math.max(aNet, 1)) * 1.26 + 50) phase = 4;
+      }
+      if (phase === 4) {
+        const vv = Math.hypot(vx, vy) || 1;
+        if (prop > 0) {
+          // 1-3-1 着陆: 需求超单机上限自动并 3 机, 低空收尾回单机(真实猎鹰剖面)
+          const ayC = (vy * vy) / (2 * Math.max(h - CATCH - 0.5, 0.5)) + g;
+          const axC = clamp(-vx * 0.6 - (h - CATCH > (O.p4h || 250) ? (dr - LZ) * (O.p4 || 0.004) : 0), -(O.p4L || 10), O.p4L || 10);   // 高空带位置项, 低空纯垂直
+          const aMag = Math.hypot(axC, ayC) || 1;
+          const eng = clamp(Math.ceil(aMag * m / (FE1 * 0.92)), 1, O.ldMax || 3);
+          F = eng * FE1;
+          const k2 = Math.min(1, (F / m) / aMag);
+          ax = axC * k2; ay = ayC * k2;
+          const thr = clamp(aMag * m / F, 0.25, 1.0);
+          m -= eng * MD1 * thr * dt; prop -= eng * MD1 * thr * dt;
+        }
+        const rho = 1.225 * Math.exp(-h / 8500);
+        const ad = 0.5 * rho * vv * vv * CdA / m;
+        ax += -ad * vx / vv; ay += -ad * vy / vv;
+      }
+      vy += (ay - g) * dt;
+      vx += ax * dt;
+      h += vy * dt;
+      dr += vx * dt;
+      if (h <= CATCH) { h = CATCH; touchdown = t; phase = 5; }
+      if (t - lastPush >= 1 || touchdown) { rows.push({ t, h, vx, vy, dr, phase, F }); lastPush = t; }
+    }
+    rows.td = touchdown;
+    return rows;
+  }
+  function cz5AscentTable() { return ascentTable(ROCKETS.cz5.phys); }
+  function lnchTC(t) {
+    const T = (LNCH.cfg || ROCKETS.cz5).tc;
+    for (const seg of T) if (t < seg[0]) return seg[1];
+    return 16;
+  }
+  function lnchTableAt(t, o) {
+    const tb = LNCH.table;
+    const i = clamp(Math.floor(t / 1.0), 0, tb.length - 2);
+    const a = tb[i], b = tb[i + 1];
+    const k = clamp((t - a.t) / (b.t - a.t || 1), 0, 1);
+    o.h = lerp(a.h, b.h, k); o.v = lerp(a.v, b.v, k); o.dr = lerp(a.dr, b.dr, k);
+    o.pitch = lerp(a.pitch, b.pitch, k); o.F = lerp(a.F, b.F, k);
+    return o;
+  }
+  const _lnchQ = { h: 0, v: 0, dr: 0, pitch: 0, F: 0 };
+  const _pfUp = [0, 0, 0], _pfE = [0, 0, 0], _pfN = [0, 0, 0];
+  const _lnchQuat = typeof THREE !== "undefined" ? new THREE.Quaternion() : null;
+  function geoDirEcl(latDeg, lonDeg, out) {   // 地理经纬 → 黄道系单位方向(out[0..2]=天顶, out[3..5]=地轴); 桩环境解析后备
+    const jb = bodyByName.Earth;
+    const phi = latDeg * D2R, lam = lonDeg * D2R;
+    let ux = 0, uy = 0, uz = 0, sx = 0, sy = 0, sz = 1;
+    if (jb.spinMesh && _lnchQuat) {
+      /* three.js SphereGeometry UV: u=0 在 -X 且贴图左缘=180°W → 经度 λ 的局部方向 = (cosφcosλ, sinφ, -cosφsinλ)
+       * (真机贴图级校验于阶段38: 修正此前 x,z 反号 = 经度错 180° 的潜伏缺陷) */
+      _v3a.set(Math.cos(phi) * Math.cos(lam), Math.sin(phi), -Math.sin(lam) * Math.cos(phi));
+      jb.spinMesh.getWorldQuaternion(_lnchQuat);
+      _v3a.applyQuaternion(_lnchQuat);
+      ux = Number(_v3a.x) || 0; uy = Number(_v3a.y) || 0; uz = Number(_v3a.z) || 0;
+      _v3b.set(0, 1, 0);
+      _v3b.applyQuaternion(_lnchQuat);
+      sx = Number(_v3b.x) || 0; sy = Number(_v3b.y) || 0; sz = Number(_v3b.z) || 0;
+    }
+    if (Math.hypot(ux, uy, uz) < 0.5 || Math.hypot(sx, sy, sz) < 0.5) {
+      const eps = 23.4393 * D2R;
+      const era = Math.PI * 2 * (0.7790572732640 + 1.00273781191135448 * (jd - J2000));
+      const spin = era + lam;
+      const xq = Math.cos(phi) * Math.cos(spin), yq = Math.cos(phi) * Math.sin(spin), zq = Math.sin(phi);
+      ux = xq; uy = yq * Math.cos(eps) + zq * Math.sin(eps); uz = -yq * Math.sin(eps) + zq * Math.cos(eps);
+      sx = 0; sy = Math.sin(eps); sz = Math.cos(eps);
+    }
+    out[0] = ux; out[1] = uy; out[2] = uz;
+    if (out.length >= 6) { out[3] = sx; out[4] = sy; out[5] = sz; }
+    return out;
+  }
+  const _geo6 = [0, 0, 0, 0, 0, 1];
+  function lnchPadFrame() {   // 发射场方向基: 复用 geoDirEcl
+    geoDirEcl(LNCH.lat, LNCH.lon, _geo6);
+    const ux = _geo6[0], uy = _geo6[1], uz = _geo6[2];
+    const sx = _geo6[3], sy = _geo6[4], sz = _geo6[5];
+    _pfUp[0] = ux; _pfUp[1] = uy; _pfUp[2] = uz;
+    const ex = sy * uz - sz * uy, ey = sz * ux - sx * uz, ez = sx * uy - sy * ux;
+    const eL = Math.hypot(ex, ey, ez) || 1;
+    _pfE[0] = ex / eL; _pfE[1] = ey / eL; _pfE[2] = ez / eL;
+    _pfN[0] = _pfUp[1] * _pfE[2] - _pfUp[2] * _pfE[1];
+    _pfN[1] = _pfUp[2] * _pfE[0] - _pfUp[0] * _pfE[2];
+    _pfN[2] = _pfUp[0] * _pfE[1] - _pfUp[1] * _pfE[0];
+    LNCH.axis = [sx, sy, sz];
+  }
+  function lnchDownrangeDir(out) {
+    const cA = Math.cos(LNCH.incAz), sA = Math.sin(LNCH.incAz);
+    out[0] = _pfN[0] * cA + _pfE[0] * sA;
+    out[1] = _pfN[1] * cA + _pfE[1] * sA;
+    out[2] = _pfN[2] * cA + _pfE[2] * sA;
+    return out;
+  }
+  function lnchInsertionState() {
+    if (!LNCH.table) LNCH.table = ascentTable((LNCH.cfg || ROCKETS.cz5).phys);
+    const tb = LNCH.table;
+    const tC = tb.tCut || tb[tb.length - 1].t;
+    const fin = tb[clamp(Math.round(tC), 0, tb.length - 1)];
+    lnchPadFrame();
+    const dd = lnchDownrangeDir([0, 0, 0]);
+    const th = fin.dr / 6371e3;
+    const R = 6371 + fin.h / 1000;
+    const cT = Math.cos(th), sT = Math.sin(th);
+    const rd = [_pfUp[0] * cT + dd[0] * sT, _pfUp[1] * cT + dd[1] * sT, _pfUp[2] * cT + dd[2] * sT];
+    const tg = [dd[0] * cT - _pfUp[0] * sT, dd[1] * cT - _pfUp[1] * sT, dd[2] * cT - _pfUp[2] * sT];
+    const g = fin.pitch;
+    const vd = [tg[0] * Math.cos(g) + rd[0] * Math.sin(g), tg[1] * Math.cos(g) + rd[1] * Math.sin(g), tg[2] * Math.cos(g) + rd[2] * Math.sin(g)];
+    const eW = worldKm.Earth;
+    const e1 = heliocentricKm(bodyByName.Earth.orbit_j2000, jd + 0.005);
+    const e0 = heliocentricKm(bodyByName.Earth.orbit_j2000, jd - 0.005);
+    const vE = [(e1[0] - e0[0]) / 864, (e1[1] - e0[1]) / 864, (e1[2] - e0[2]) / 864];
+    const vk = fin.v / 1000;
+    const OME = 7.2921159e-5;
+    const ax = LNCH.axis;
+    const rx = rd[0] * R, ry = rd[1] * R, rz = rd[2] * R;
+    const vRot = [OME * (ax[1] * rz - ax[2] * ry), OME * (ax[2] * rx - ax[0] * rz), OME * (ax[0] * ry - ax[1] * rx)];
+    const vI = [vd[0] * vk + vRot[0], vd[1] * vk + vRot[1], vd[2] * vk + vRot[2]];
+    return {
+      r: [eW[0] + rx, eW[1] + ry, eW[2] + rz],
+      v: [vE[0] + vI[0], vE[1] + vI[1], vE[2] + vI[2]],
+      hKm: fin.h / 1000, vKmS: Math.hypot(vI[0], vI[1], vI[2])
+    };
+  }
+  function lnchEnsureAssets(cb) {
+    if (typeof window === "undefined") return;
+    const cfg = LNCH.cfg;
+    if (window[cfg.glbKey] && window.parseGLBCore) { cb(); return; }
+    if (!window.parseGLBCore) { LNCH.state = "off"; return; }
+    LNCH.state = "load";
+    $("lnchPhase").textContent = "装载模型…";
+    try {
+      const sc = document.createElement("script");
+      sc.src = cfg.file;
+      sc.onload = () => { if (window[cfg.glbKey]) cb(); else LNCH.state = "off"; };
+      sc.onerror = () => { LNCH.state = "off"; $("lnchHud").classList.remove("show"); };
+      document.body.appendChild(sc);
+    } catch (e) { LNCH.state = "off"; }
+  }
+  function lnchDispose(id) {
+    const T = LNCH.builtMap[id];
+    if (!T) return;
+    T.W.traverse((oo) => {
+      if (oo.geometry && oo.geometry.dispose) oo.geometry.dispose();
+      if (oo.material && oo.material.dispose) oo.material.dispose();
+    });
+    scene.remove(T.W);
+    delete LNCH.builtMap[id];
+  }
+  function lnchBuildTheater() {
+    const id = LNCH.rk;
+    if (LNCH.builtMap[id]) { LNCH.builtMap[id]._at = Date.now(); return true; }
+    // LRU: 常驻 ≤2 座剧场, 逐出最旧的非活动项
+    const ids = Object.keys(LNCH.builtMap);
+    if (ids.length >= 2) {
+      ids.sort((a, b) => (LNCH.builtMap[a]._at || 0) - (LNCH.builtMap[b]._at || 0));
+      for (const old of ids) {
+        if (old !== id && Object.keys(LNCH.builtMap).length >= 2) lnchDispose(old);
+      }
+    }
+    const cfg = LNCH.cfg;
+    const G = window[cfg.glbKey];
+    let rc, siteGroup = null;
+    try {
+      rc = window.parseGLBCore(G.rocket);
+      if (G.site) siteGroup = window.buildGLBGroup(window.parseGLBCore(G.site), THREE).group;
+    } catch (e) { return false; }
+    const W = new THREE.Group();
+    W.scale.setScalar(1e-6);
+    const rb = window.buildGLBGroup(rc, THREE);
+    const rocket = new THREE.Group();
+    rocket.add(rb.group);
+    W.add(rocket);
+    if (siteGroup) W.add(siteGroup);
+    else {   // 通用发射台: 平台 + 四避雷塔
+      const pad = new THREE.Mesh(new THREE.BoxGeometry(52, 3, 52), new THREE.MeshStandardMaterial({ color: 0x565a60, roughness: 0.9 }));
+      pad.position.y = -1.6;
+      W.add(pad);
+      for (const [mx, mz] of [[-60, -60], [60, -60], [-60, 60], [60, 60]]) {
+        const mast = new THREE.Mesh(new THREE.CylinderGeometry(0.9, 1.4, 110, 8), new THREE.MeshStandardMaterial({ color: 0x8a8f96, roughness: 0.7 }));
+        mast.position.set(mx, 55, mz);
+        W.add(mast);
+      }
+    }
+    const ground = new THREE.Mesh(new THREE.CircleGeometry(60000, 48), new THREE.MeshStandardMaterial({ color: 0x2c3325, roughness: 1 }));
+    ground.rotation.x = -Math.PI / 2;
+    ground.position.y = -0.4;
+    W.add(ground);
+    const dome = new THREE.Mesh(new THREE.SphereGeometry(70000, 24, 12),
+      new THREE.MeshBasicMaterial({ color: 0x86b6e8, side: THREE.BackSide, transparent: true, opacity: 0.94, depthWrite: false }));
+    W.add(dome);
+    W.add(new THREE.HemisphereLight(0xdfe9ff, 0x40382c, 1.15));
+    const fill = new THREE.PointLight(0xbfd0e8, 0.85, 2600, 1.6);   // 追拍补光: 夜窗/背光时近景可读(阶段38)
+    fill.name = "fill";
+    W.add(fill);
+    const dl = new THREE.DirectionalLight(0xfff2dd, 1.6);
+    dl.position.set(40000, 60000, 20000);
+    W.add(dl);
+    function mkPlume(n, colr, size) {
+      const g = new THREE.BufferGeometry();
+      g.setAttribute("position", new THREE.BufferAttribute(new Float32Array(n * 3), 3));
+      const mtl = new THREE.PointsMaterial({ map: makeComaTexture(), color: colr, size, transparent: true, opacity: 0.85, blending: THREE.AdditiveBlending, depthWrite: false, sizeAttenuation: true, alphaTest: 0.02 });   // map 必带: 无贴图点精灵=实心方块(阶段38 真机定位)
+      const p = new THREE.Points(g, mtl);
+      p.frustumCulled = false;
+      const seeds = new Float32Array(n * 3);
+      for (let i = 0; i < n * 3; i += 1) seeds[i] = Math.random();
+      p.userData.seeds = seeds;
+      W.add(p);
+      return p;
+    }
+    const plume = mkPlume(220, 0xff9a40, 18);
+    const plumeCore = mkPlume(90, 0xfff3d8, 9);
+    const smk = new THREE.Group();
+    for (let i = 0; i < 36; i += 1) {
+      const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: makeComaTexture(), color: 0xb9bcc2, transparent: true, opacity: 0, depthWrite: false }));
+      sp.userData.a = Math.random() * Math.PI * 2;
+      sp.userData.r = 14 + Math.random() * 20;
+      sp.userData.k = 0.6 + Math.random() * 0.9;
+      smk.add(sp);
+    }
+    W.add(smk);
+    let bParts = null;
+    if (cfg.booster) {   // 一级回收专属: 展开腿 + LZ 着陆区 + 独立羽流
+      const legsOut = new THREE.Group();
+      const legMat = new THREE.MeshStandardMaterial({ color: 0x181818, roughness: 0.6, metalness: 0.3 });
+      for (let li = 0; li < 4; li += 1) {
+        const a = li * Math.PI / 2 + Math.PI / 4;
+        const leg = new THREE.Mesh(new THREE.BoxGeometry(0.5, 11, 0.34), legMat);
+        leg.position.set(Math.cos(a) * 4.4, 3.4, Math.sin(a) * 4.4);
+        leg.rotation.z = Math.cos(a) * 0.62;
+        leg.rotation.x = Math.sin(a) * 0.62;
+        legsOut.add(leg);
+        const foot = new THREE.Mesh(new THREE.CylinderGeometry(1.0, 1.2, 0.35, 10), legMat);
+        foot.position.set(Math.cos(a) * 7.3, 0.15, Math.sin(a) * 7.3);
+        legsOut.add(foot);
+      }
+      legsOut.visible = false;
+      W.add(legsOut);
+      const lz = new THREE.Group();
+      const pad2 = new THREE.Mesh(new THREE.CylinderGeometry(32, 32, 0.5, 36), new THREE.MeshStandardMaterial({ color: 0x2e3134, roughness: 0.95 }));
+      pad2.position.y = 0.1;
+      lz.add(pad2);
+      const ring = new THREE.Mesh(new THREE.TorusGeometry(24, 0.9, 6, 40), new THREE.MeshStandardMaterial({ color: 0xdadfe4, roughness: 0.8 }));
+      ring.rotation.x = Math.PI / 2;
+      ring.position.y = 0.42;
+      lz.add(ring);
+      for (const rzz of [0, Math.PI / 2]) {
+        const bar = new THREE.Mesh(new THREE.BoxGeometry(34, 0.2, 3.2), new THREE.MeshStandardMaterial({ color: 0xdadfe4, roughness: 0.8 }));
+        bar.rotation.y = rzz;
+        bar.position.y = 0.42;
+        lz.add(bar);
+      }
+      lz.position.set(cfg.booster.lzDr, 0, 60);
+      W.add(lz);
+      const bPlume = mkPlume(130, 0xffa040, 750);
+      bParts = { legsOut, lz, bPlume, foldedLegs: [] };
+      rb.parts.core_stage1.traverse((oo) => {
+        if (oo.name && (oo.name.indexOf("_leg_") >= 0 || oo.name.indexOf("_foot_") >= 0)) bParts.foldedLegs.push(oo);
+      });
+    }
+    let sat = rb.parts.payload || null;
+    if (!sat) {
+      sat = new THREE.Group();
+      const bus = new THREE.Mesh(new THREE.BoxGeometry(3.2, 3.6, 3.2), new THREE.MeshStandardMaterial({ color: 0xc8a44a, roughness: 0.5, metalness: 0.6 }));
+      sat.add(bus);
+      sat.position.y = (G.meta.fairingY && G.meta.fairingY[1] > 1 ? G.meta.fairingY[0] + 8 : (G.meta.heightM || 60) - 16);
+      rocket.add(sat);
+    }
+    W.visible = false;
+    scene.add(W);
+    LNCH.builtMap[id] = { W, rocket, parts: rb.parts, plume, plumeCore, smoke: smk, dome, ground, sat, satHome: sat.position.clone(), bParts, _at: Date.now() };
+    return true;
+  }
+  function lnchSkipListener() { /* 阶段39: 单击跳过误触率高, 摘除 — 改 HUD 跳过按钮 + Esc */ }
+  function lnchEscListener(e) { if (e.code === "Escape" && LNCH.state !== "off") LNCH.skipReq = true; }
+  function lnchEnter(cfg0) {
+    if (LNCH.state !== "off") return;
+    stopTour(); endReplay(); endLightCruise();
+    try { if (MAG.on) magExit(); } catch (e) { /* 未建 */ }
+    if (typeof CINEMA !== "undefined" && CINEMA.on) cineStop(false);
+    if (galFrame) setGalFrame(false);
+    if (deepTime && setDeepTimeRef) setDeepTimeRef(false);
+    if (stars3D) { stars3D = false; $("cosmoBtn").classList.remove("active"); $("cosmoHint").classList.remove("show"); }
+    LNCH.rk = (cfg0 && cfg0.rocket && ROCKETS[cfg0.rocket]) ? cfg0.rocket : "cz5";
+    LNCH.cfg = ROCKETS[LNCH.rk];
+    LNCH.lat = LNCH.cfg.site.lat;
+    LNCH.lon = LNCH.cfg.site.lon;
+    LNCH.incAz = LNCH.cfg.az * D2R;
+    LNCH.hist = !!(cfg0 && cfg0.hist);
+    LNCH.chain = (cfg0 && cfg0.chain) || null;
+    LNCH.spdMode = (cfg0 && (cfg0.hist || cfg0.chain)) ? "fast" : "real";
+    LNCH.camMode = "auto";
+    LNCH._spdIdx = 0; LNCH.spdMul = 1;
+    $("lnchSpd") && ($("lnchSpd").textContent = (LNCH.spdMode === "fast") ? "导演节奏 ⏩" : "实时 1:1");
+    $("lnchCamBtn") && ($("lnchCamBtn").textContent = "机位: 导播");
+    const _sb2 = $("lnchSpd");
+    if (_sb2) _sb2.textContent = LNCH.spdMode === "fast" ? "导演节奏 ⏩" : "实时 1:1";
+    LNCH.apollo = !!(cfg0 && cfg0.apollo);
+    /* 时间主权: 发射 8 分钟的节奏由剧场独占(压缩 12×), 全局挡位暂停; 退场恢复(阶段38 用户实测: 天/秒挡冲垮发射细节) */
+    LNCH._tSave = { playing, dps: daysPerSecond };
+    playing = false;
+    $("playBtn").textContent = "▶";
+    if (bodyByName.Earth.atmoMesh) bodyByName.Earth.atmoMesh.visible = false;   // 大气壳内视角曝白, 剧场内隐(阶段38)
+    LNCH.failAt = (cfg0 && cfg0.historical && LNCH.cfg.failT) ? LNCH.cfg.failT : 0;
+    LNCH.failed = 0;
+    lnchEnsureAssets(() => {
+      if (!lnchBuildTheater()) { LNCH.state = "off"; return; }
+      const T = LNCH.builtMap[LNCH.rk];
+      for (const k in LNCH.builtMap) LNCH.builtMap[k].W.visible = false;
+      LNCH.W = T.W; LNCH.rocket = T.rocket; LNCH.parts = T.parts;
+      LNCH.plume = T.plume; LNCH.plumeCore = T.plumeCore; LNCH.smoke = T.smoke;
+      LNCH.dome = T.dome; LNCH.ground = T.ground; LNCH.sat = T.sat;
+      LNCH.state = "pre";
+      LNCH.t = 0; LNCH.wall = 0; LNCH.skipReq = false; LNCH.sep = {}; LNCH.evFired = LNCH.cfg.events.map(() => 0);
+      LNCH.bTable = null; LNCH.bPhase = -1;
+      if (T.bParts) {
+        T.bParts.legsOut.visible = false;
+        for (const fl of T.bParts.foldedLegs) fl.visible = true;
+        T.bParts.bPlume.visible = false;
+      }
+      LNCH.table = ascentTable(LNCH.cfg.phys);
+      playing = false;
+      $("playBtn").textContent = "▶";
+      animateScaleTo(0);
+      setFocus("Earth", true);
+      LNCH.savedNear = camera.near;
+      camera.near = 2e-6;   // 2m: 细拉线对数深度撕裂消(阶段38); 最近机位 ~100m 充裕
+      camera.updateProjectionMatrix();
+      controls.enabled = false;
+      for (const k in LNCH.parts) {
+        LNCH.parts[k].visible = true;
+        LNCH.parts[k].position.set(0, 0, 0);
+        LNCH.parts[k].rotation.set(0, 0, 0);
+      }
+      if (LNCH.sat && T.satHome) { LNCH.sat.position.copy(T.satHome); }
+      LNCH.rocket.position.set(0, 0, 0);
+      LNCH.rocket.rotation.set(0, 0, 0);
+      LNCH.W.visible = true;
+      bodyByName.Earth.spinMesh.scale.setScalar(0.9975);
+      $("lnchHud").classList.add("show");
+      $("lnchPhase").textContent = `${LNCH.cfg.cn} · 倒计时`;
+      if (typeof document.addEventListener === "function") {
+        document.addEventListener("pointerdown", lnchSkipListener, true);
+        document.addEventListener("keydown", lnchEscListener, true);
+      }
+      audioPoke();
+      sfxRumble();
+    });
+  }
+  function lnchExit() {
+    if (LNCH.state === "off") return;
+    LNCH.state = "off";
+    if (LNCH._tSave) {
+      playing = LNCH._tSave.playing;
+      daysPerSecond = LNCH._tSave.dps;
+      $("playBtn").textContent = playing ? "⏸" : "▶";
+      if (window.__setSpeed) window.__setSpeed(daysPerSecond, playing);
+      LNCH._tSave = null;
+    }
+    if (bodyByName.Earth.atmoMesh) bodyByName.Earth.atmoMesh.visible = true;
+    if (LNCH.W) LNCH.W.visible = false;
+    camera.near = LNCH.savedNear;
+    camera.updateProjectionMatrix();
+    camera.up.set(0, 0, 1);
+    controls.enabled = true;
+    bodyByName.Earth.spinMesh.scale.setScalar(1);
+    $("lnchHud").classList.remove("show");
+    if (typeof document.removeEventListener === "function") {
+      document.removeEventListener("pointerdown", lnchSkipListener, true);
+      document.removeEventListener("keydown", lnchEscListener, true);
+    }
+    if (!playing) togglePlay();
+  }
+  function lnchHandoff() {
+    const st = lnchInsertionState();
+    if (!LNCH.skipReq) award("launch");
+    try {
+      const fl = JSON.parse(localStorage.getItem("ss_fleet") || "{}");
+      fl[LNCH.rk] = 1;
+      localStorage.setItem("ss_fleet", JSON.stringify(fl));
+      if (Object.keys(fl).length >= 3) award("fleet");
+    } catch (e) { /* 桩 */ }
+    const chain = LNCH.chain;
+    lnchExit();
+    if (chain) { startReplay(chain); return null; }
+    let seq2 = 1;
+    try { seq2 = parseInt(localStorage.getItem("ss_launchN") || "0", 10) + 1; localStorage.setItem("ss_launchN", String(seq2)); } catch (e) { /* 桩 */ }
+    const siteCn = (SITES.find((x) => x.id === LNCH.rk) || {}).cn || "";
+    const p = launchProbe(st.r, st.v, { name: `${LNCH.cfg.cn}载荷-${seq2}` });
+    if (LNCH.apollo && p) {
+      apolloStart(p);
+      if (window.__setSpeed) window.__setSpeed(1 / 86400, true);   // 真实时间对应现实(阶段38 用户要求); 加速权交给用户
+    }
+    setFocus("Earth", false);
+    $("hohmannStatus") && ($("hohmannStatus").innerHTML = `${LNCH.cfg.cn}载荷-${seq2} 入轨: ${st.hKm.toFixed(0)} km / ${st.vKmS.toFixed(2)} km/s · 发自${siteCn}${LNCH.apollo ? ' —— 实时等待 TLI 窗口(约1~3小时) <button id="apSpdBtn">加速: 时/秒 ▶</button>' : ""}`);
+    return p;
+  }
+  const _lnchV1 = typeof THREE !== "undefined" ? new THREE.Vector3() : null;
+  const _lnchV2 = typeof THREE !== "undefined" ? new THREE.Vector3() : null;
+  const _lnchM4 = typeof THREE !== "undefined" ? new THREE.Matrix4() : null;
+  function tickLaunch(dt) {
+    if (LNCH.state === "off" || LNCH.state === "load") return;
+    const cfg = LNCH.cfg;
+    const meta = window[cfg.glbKey].meta;
+    lnchPadFrame();
+    const eS = scenePos.Earth || [0, 0, 0];
+    const Rbu = 6371 / SCALE.sceneUnitKm;
+    LNCH.W.position.set(eS[0] + _pfUp[0] * Rbu, eS[1] + _pfUp[1] * Rbu, eS[2] + _pfUp[2] * Rbu);
+    const dd = lnchDownrangeDir([0, 0, 0]);
+    _lnchV1.set(dd[0], dd[1], dd[2]);
+    _lnchV2.set(_pfUp[0], _pfUp[1], _pfUp[2]);
+    const zx = _lnchV1.y * _lnchV2.z - _lnchV1.z * _lnchV2.y;
+    const zy = _lnchV1.z * _lnchV2.x - _lnchV1.x * _lnchV2.z;
+    const zz = _lnchV1.x * _lnchV2.y - _lnchV1.y * _lnchV2.x;
+    _lnchM4.makeBasis(_lnchV1, _lnchV2, new THREE.Vector3(zx, zy, zz).normalize());
+    LNCH.W.quaternion.setFromRotationMatrix(_lnchM4);
+    LNCH.W.updateMatrixWorld(true);
+    camera.up.set(_pfUp[0], _pfUp[1], _pfUp[2]);
+    const q = _lnchQ;
+    const hScale = (meta.heightM || 57) / 57;
+    if (LNCH.state === "pre") {
+      LNCH.wall += dt;
+      const tm = LNCH.wall - 5;
+      $("lnchT").textContent = (tm < 0 ? "-" : "+") + new Date(Math.abs(tm) * 1000).toISOString().slice(14, 19);
+      lnchCam(0, 0, hScale);
+      lnchPlume(clamp((LNCH.wall - 2.4) / 2.6, 0, 1) * 0.5, 0, 0);
+      lnchSmoke(clamp((LNCH.wall - 2.4) / 2.6, 0, 1), dt);
+      if (LNCH.skipReq) { lnchHandoff(); return; }
+      if (LNCH.wall >= 5) { LNCH.state = "fly"; LNCH.t = 0; sfxRumble(); }
+      return;
+    }
+    if (LNCH.state === "fail") {   // N1 史实模式: 爆炸定格与挽歌
+      LNCH.failed += dt;
+      lnchPlume(clamp(2.2 - LNCH.failed, 0, 1) * 1.6, 2600, LNCH.t);
+      if (LNCH.plume) LNCH.plume.material.color.setHex(0xffb060);
+      if (LNCH.failed > 2.2 && LNCH.rocket.visible) LNCH.rocket.visible = false;
+      if (LNCH.failed > 3 && $("lnchPhase").textContent !== LNCH.cfg.failElegy) $("lnchPhase").textContent = LNCH.cfg.failElegy;
+      if (LNCH.skipReq || LNCH.failed > 9.5) {
+        LNCH.rocket.visible = true;
+        lnchExit();
+        setFocus("Earth", false);
+      }
+      return;
+    }
+    if (LNCH.state === "fly") {
+      const tc = LNCH.spdMode === "fast" ? lnchTC(LNCH.t) : (LNCH.spdMul || 1);   // 亲手发射默认真实 1:1(阶段38 用户要求); 历史/回放走导演节奏
+      if (LNCH.failAt && LNCH.t + dt * tc >= LNCH.failAt && !LNCH.failed) {
+        LNCH.t = LNCH.failAt;
+        LNCH.state = "fail";
+        $("lnchPhase").textContent = LNCH.cfg.failLabel;
+        sfxRumble();
+        sfxSnap();
+        return;
+      }
+      LNCH.t += dt * tc;
+      jd += dt * tc / 86400;
+      lnchTableAt(LNCH.t, q);
+      const Rm = 6371e3;
+      const th = q.dr / Rm;
+      const px = Math.sin(th) * (Rm + q.h);
+      const py = Math.cos(th) * (Rm + q.h) - Rm;
+      LNCH.rocket.position.set(px, py, 0);
+      LNCH.rocket.rotation.z = -(th + (Math.PI / 2 - q.pitch));
+      const _fl = LNCH.W.getObjectByName("fill");
+      if (_fl) {
+        const fg = (LNCH.bPhase >= 3 && LNCH.parts.core_stage1) ? LNCH.parts.core_stage1 : LNCH.rocket;
+        fg.getWorldPosition(_v3a);
+        LNCH.W.worldToLocal(_v3a);
+        _fl.position.set(_v3a.x + 90, _v3a.y + 130, _v3a.z + 60);
+      }
+      lnchPlume(q.F > 0 ? 1 : 0, q.v, LNCH.t);
+      lnchSmoke(LNCH.t < 30 ? 1 : 0, dt);
+      LNCH.dome.material.opacity = 0.94 * clamp(1 - q.h / 90000, 0, 1);
+      LNCH.ground.visible = q.h < 250000;
+      // 配置化分离编排
+      for (let i = 0; i < cfg.events.length; i += 1) {
+        const ev = cfg.events[i];
+        if (!LNCH.evFired[i] && LNCH.t >= ev.t) {
+          LNCH.evFired[i] = LNCH.t;
+          sfxSnap();
+          $("lnchPhase").textContent = ev.label;
+          if (ev.reveal && LNCH.sat) LNCH.sat.visible = true;
+        }
+        if (LNCH.evFired[i]) {
+          const el = (LNCH.t - LNCH.evFired[i]) / 8;
+          for (const pn of ev.parts) {
+            if (cfg.booster && pn === "core_stage1") continue;   // 一级由返航弹道接管
+            const g = LNCH.parts[pn];
+            if (!g) continue;
+            if (ev.mode === "radial") {
+              const d = (meta.boosterDir && meta.boosterDir[pn]) || [pn.endsWith("2") ? -1 : 1, 0];
+              g.position.set(d[0] * el * 30, -el * el * 14, d[1] * el * 30);
+              g.rotation.z = el * 0.55 * (d[0] || 0.3);
+              g.rotation.x = -el * 0.55 * (d[1] || 0);
+            } else if (ev.mode === "up") {
+              g.position.set(el * 26 * hScale, el * 40 * hScale, el * 9);
+              g.rotation.z = -el * 0.8;
+            } else {   // back: 沿速度反向落后 + 下坠
+              g.position.set(-el * 55 * hScale, -el * el * 20, 0);
+              g.rotation.z = el * 0.22;
+            }
+            if (el > 5) g.visible = false;
+          }
+        }
+      }
+      const tCut = LNCH.table.tCut || (cfg.phys.tEnd - 10);
+      if (LNCH.t >= tCut && !LNCH.sep.m) {
+        LNCH.sep.m = { t0: LNCH.t };
+        $("lnchPhase").textContent = "制导关机 · 载荷分离";
+      }
+      if (LNCH.sep.m && cfg.satDrift && LNCH.sat) LNCH.sat.position.y += dt * 26;
+      let chase = false;
+      if (cfg.booster && LNCH.t >= cfg.booster.sepT) {
+        if (!LNCH.bTable) LNCH.bTable = f9BoosterTable(LNCH.table, cfg.booster.sepT, cfg.booster.lzDr, cfg.booster.opts);
+        const bt = LNCH.bTable;
+        const last = bt[bt.length - 1];
+        const bT = Math.min(LNCH.t, last.t);
+        let bi = 0;
+        while (bi < bt.length - 2 && bt[bi + 1].t < bT) bi += 1;
+        const a2 = bt[bi], b2 = bt[bi + 1];
+        const kk = clamp((bT - a2.t) / (b2.t - a2.t || 1), 0, 1);
+        const bh = lerp(a2.h, b2.h, kk), bdr = lerp(a2.dr, b2.dr, kk);
+        const bvx = lerp(a2.vx, b2.vx, kk), bvy = lerp(a2.vy, b2.vy, kk);
+        const bph = b2.phase;
+        const Rm2 = 6371e3;
+        const thb = bdr / Rm2;
+        let bpx = Math.sin(thb) * (Rm2 + bh), bpy = Math.cos(thb) * (Rm2 + bh) - Rm2;
+        // 末段 800m 视觉混合到 LZ(物理表如实, 渲染补末端精确制导; 简化模型 km 级落点精度已在文档言明)
+        const lzBlend = clamp(1 - bh / 800, 0, 1);
+        if (lzBlend > 0) {
+          const thL = cfg.booster.lzDr / Rm2;
+          bpx = lerp(bpx, Math.sin(thL) * (Rm2 + bh), lzBlend);
+          bpy = lerp(bpy, Math.cos(thL) * (Rm2 + bh) - Rm2, lzBlend);
+        }
+        const g1 = LNCH.parts.core_stage1;
+        // 姿态: 翻转→返航水平反推→竖直下降
+        let att;
+        if (bph === 0) att = lerp(q.pitch, Math.PI * 0.92, clamp((bT - cfg.booster.sepT) / 12, 0, 1));
+        else if (bph === 1) att = Math.PI * 0.94;
+        else att = Math.PI / 2;
+        const wantRot = -(thb + Math.PI / 2 - att);
+        g1.position.set(bpx - LNCH.rocket.position.x, bpy - LNCH.rocket.position.y, 0);
+        g1.rotation.z = wantRot - LNCH.rocket.rotation.z;
+        const T2 = LNCH.builtMap[LNCH.rk];
+        if (T2.bParts) {
+          if (bh < 1600 && bph >= 3) {
+            T2.bParts.legsOut.visible = true;
+            for (const fl of T2.bParts.foldedLegs) fl.visible = false;
+            T2.bParts.legsOut.position.set(bpx, bpy, 60);
+            T2.bParts.legsOut.rotation.z = -thb;
+          }
+          const bp = T2.bParts.bPlume;
+          const burning = a2.F > 0 && bph !== 5;
+          bp.visible = burning;
+          if (burning) {
+            const arr2 = bp.geometry.attributes.position.array;
+            const sd = bp.userData.seeds;
+            const tt2 = performance.now() * 0.001;
+            const dirx = Math.sin(att) * 0 + Math.cos(wantRot + Math.PI / 2);
+            const diry = Math.sin(wantRot + Math.PI / 2);
+            for (let ii = 0; ii < arr2.length / 3; ii += 1) {
+              const fr = (sd[ii * 3] + tt2 * (1.6 + sd[ii * 3 + 2])) % 1;
+              const rr2 = 2.2 * (0.3 + fr * 1.6);
+              const aa = sd[ii * 3 + 1] * Math.PI * 2 + tt2;
+              arr2[ii * 3] = bpx - dirx * fr * 26 + Math.cos(aa) * rr2;
+              arr2[ii * 3 + 1] = bpy - diry * fr * 26 + Math.sin(aa) * rr2 * 0.5;
+              arr2[ii * 3 + 2] = 60 + Math.sin(aa) * rr2;
+            }
+            bp.geometry.attributes.position.needsUpdate = true;
+          }
+        }
+        if (bph !== LNCH.bPhase) {
+          LNCH.bPhase = bph;
+          const L2 = { 1: "一级返航点火", 25: "一级再入点火", 3: "栅格舵气动减速", 4: "着陆反推", 5: "一级着陆成功 · 二级继续入轨" };
+          if (L2[bph]) { $("lnchPhase").textContent = L2[bph]; sfxSnap(); }
+        }
+        // 追拍窗口: 分离+8s 起, 触地+5s 止
+        if (bT > cfg.booster.sepT + 8 && LNCH.t < last.t + 5 && bph !== 5 || (bph === 5 && LNCH.t < last.t + 5)) {
+          chase = true;
+          const d2 = 55 + bh * 0.10;
+          _lnchV1.set(bpx - d2 * 0.5, bpy + d2 * 0.42, 60 + d2 * 0.85);
+          LNCH.W.localToWorld(_lnchV1);
+          camera.position.copy(_lnchV1);
+          _lnchV2.set(bpx, bpy + 12, 60);
+          LNCH.W.localToWorld(_lnchV2);
+          controls.target.copy(_lnchV2);
+          camera.lookAt(_lnchV2);
+          $("lnchAlt").textContent = bh < 1000 ? bh.toFixed(0) + " m" : (bh / 1000).toFixed(1) + " km";
+          $("lnchV").textContent = Math.hypot(bvx, bvy).toFixed(0) + " m/s";
+        }
+      }
+      if (!chase) lnchCam(LNCH.t, q.h, hScale);
+      $("lnchT").textContent = "+" + new Date(LNCH.t * 1000).toISOString().slice(14, 19);
+      if (!chase) {
+        $("lnchAlt").textContent = q.h < 1000 ? q.h.toFixed(0) + " m" : (q.h / 1000).toFixed(1) + " km";
+        $("lnchV").textContent = q.v < 1000 ? q.v.toFixed(0) + " m/s" : (q.v / 1000).toFixed(2) + " km/s";
+      }
+      if (LNCH.t < (cfg.events[0] ? cfg.events[0].t : 173) && !LNCH.sep.m) {
+        $("lnchPhase").textContent = LNCH.t < 15 ? `${cfg.cn} · 点火起飞` : "上升 · 重力转弯";
+      }
+      if (LNCH.skipReq || LNCH.t >= tCut + 16) { lnchHandoff(); return; }
+    }
+  }
+  function lnchCam(t, alt, hs) {
+    let cx, cy, cz, lx, ly, lz;
+    const rp = LNCH.rocket.position;
+    if (LNCH.camMode === "onboard") {   // 箭载: 侧后 26m 跟飞(米级贴身, 全程)
+      cx = rp.x - 20 * hs; cy = rp.y + 34 * hs; cz = rp.z + 17 * hs;
+      lx = rp.x; ly = rp.y + 22 * hs; lz = rp.z;
+      _lnchV1.set(cx, cy, cz); LNCH.W.localToWorld(_lnchV1); camera.position.copy(_lnchV1);
+      _lnchV2.set(lx, ly, lz); LNCH.W.localToWorld(_lnchV2); controls.target.copy(_lnchV2); camera.lookAt(_lnchV2);
+      return;
+    }
+    if (LNCH.camMode === "top") {   // 上空: 箭正上方回望发射场/地面远去
+      cx = rp.x + 8; cy = rp.y + 300 * hs; cz = rp.z + 8;
+      lx = rp.x; ly = rp.y; lz = rp.z;
+      _lnchV1.set(cx, cy, cz); LNCH.W.localToWorld(_lnchV1); camera.position.copy(_lnchV1);
+      _lnchV2.set(lx, ly, lz); LNCH.W.localToWorld(_lnchV2); controls.target.copy(_lnchV2); camera.lookAt(_lnchV2);
+      return;
+    }
+    if (t < 26) {
+      cx = 118 * hs; cy = 22 * hs + t * 1.1 * hs; cz = 96 * hs;
+      lx = rp.x; ly = rp.y + 30 * hs; lz = rp.z;
+    } else if (t < 120) {
+      cx = 420 * hs; cy = 8; cz = 300 * hs;
+      lx = rp.x; ly = rp.y + 26 * hs; lz = rp.z;
+    } else {
+      const d = (260 + Math.min(alt * 0.55, 1400)) * (0.6 + 0.4 * hs);   // 伴飞封顶: 高空段跟到 ~1.7km 内, 箭体可辨(阶段38)
+      // 侧下仰拍: 高空段地球占近半天球, 仰角让箭体衬星空(阶段38 真机构图)
+      cx = rp.x - d * 0.85; cy = rp.y + d * 0.02; cz = rp.z + d * 0.52;
+      lx = rp.x; ly = rp.y + d * 0.14; lz = rp.z;
+    }
+    _lnchV1.set(cx, cy, cz);
+    LNCH.W.localToWorld(_lnchV1);
+    camera.position.copy(_lnchV1);
+    _lnchV2.set(lx, ly, lz);
+    LNCH.W.localToWorld(_lnchV2);
+    controls.target.copy(_lnchV2);
+    camera.lookAt(_lnchV2);
+  }
+  function lnchPlumePhase(t) {
+    const ph = LNCH.cfg.plume;
+    for (const p of ph) if (t >= (p.t0 || 0) && t < p.t1) return p;
+    return null;
+  }
+  function lnchPlume(throttle, v, t) {
+    const phase = lnchPlumePhase(t) || { y: 1.6, s: 1 };
+    for (const [p, len, rad] of [[LNCH.plume, 46, 4.2], [LNCH.plumeCore, 16, 1.7]]) {
+      if (!p) continue;
+      p.visible = throttle > 0.02;
+      if (!p.visible) continue;
+      const arr = p.geometry.attributes.position.array;
+      const seeds = p.userData.seeds;
+      const tt = performance.now() * 0.001;
+      const L = len * phase.s * (1 + Math.min(v / 2600, 2.2)) * throttle;
+      const n = arr.length / 3;
+      for (let i = 0; i < n; i += 1) {
+        const fr = (seeds[i * 3] + tt * (1.4 + seeds[i * 3 + 2])) % 1;
+        const rr = rad * phase.s * (0.25 + fr * (1 + Math.min(v / 3200, 2.6))) * throttle;
+        const a = seeds[i * 3 + 1] * Math.PI * 2 + tt * 0.6;
+        arr[i * 3] = LNCH.rocket.position.x + Math.cos(a) * rr;
+        arr[i * 3 + 1] = LNCH.rocket.position.y + phase.y - fr * L;
+        arr[i * 3 + 2] = LNCH.rocket.position.z + Math.sin(a) * rr;
+      }
+      p.geometry.attributes.position.needsUpdate = true;
+      p.material.opacity = (0.1 + 0.16 * throttle) * clamp(1.5 - v / 2400, 0.35, 1);   // 高空羽流稀薄化
+      if (phase.col && p === LNCH.plume) p.material.color.setHex(phase.col);
+    }
+  }
+  function lnchSmoke(k, dt) {
+    if (!LNCH.smoke) return;
+    LNCH.smoke.visible = k > 0.01;
+    if (!LNCH.smoke.visible) return;
+    const tt = performance.now() * 0.001;
+    for (const sp of LNCH.smoke.children) {
+      const u = sp.userData;
+      const r = u.r + ((tt * 6 * u.k) % 55);
+      sp.position.set(Math.cos(u.a) * r, 2.5 + ((tt * 2.2 * u.k) % 16), Math.sin(u.a) * r);
+      const s2 = 12 + r * 0.8;
+      sp.scale.set(s2, s2, 1);
+      sp.material.opacity = 0.13 * k * clamp(1 - r / 68, 0, 1);
+    }
+  }
+
   /* ---------------- 历史名场面: 一键穿越(时刻均经引擎/文献双验) ---------------- */
   const HISTORY_SCENES = [
     { y: "1054", t: "天关客星 · 蟹状星云的诞生", d: "宋代天文学家记录『昼见如太白』二十三日 —— 那颗超新星的遗骸至今仍在膨胀, 就是蟹状星云 M1。", act: "m1" },
     { y: "1859-09-01", t: "卡林顿事件 · 史上最强磁暴", d: "英国天文学家卡林顿看见太阳上一道白光 —— 17 小时后, 电报机自燃, 极光照亮加勒比。进磁层剧场重演这场风暴。", act: "carrington" },
     { y: "1910-05-19", t: "地球穿过哈雷彗尾", d: "报纸预言氰气灭世, 商人卖出成千上万『防彗星药丸』。当晚, 地球安然穿过彗尾。", jd: 2418810.9, focus: "Halley", scale: 1 },
     { y: "1919-05-29", t: "爱丁顿的日全食 · 相对论封神", d: "普林西比岛, 食甚 6 分 51 秒。星光偏折 1.75 角秒 —— 广义相对论一战成名。站在他站过的地方看这场食。", sky: [1.614, 7.404, 2422108.094] },
-    { y: "1969-07-20", t: "静海基地 · 人类的一小步", d: "阿波罗 11 号降落在静海。去月球车模式选『静海』着陆区, 亲自开过那片土地。", act: "moon" },
+    { y: "1969-02-21", t: "N1 首飞 · 苏联的月球梦(史实)", d: "30 台发动机, 4500 吨推力。剧场按史实重演: T+68.7 秒, KORD 系统切断全部发动机。想看它如果成功的样子, 去沙盒按下 N1。", act: "launch", rocket: "n1", historical: true, jd: 2440273.888 },
+        { y: "1969-07-16", t: "阿波罗11 出发 · 土星五号", d: "5 台 F-1 同时点火, 3400 吨轰鸣离地——人类历史上最强的机器, 载着三个人和一面旗子去月球。从 LC-39A 塔架看这一幕。", act: "launch", rocket: "saturn5", apollo: true, jd: 2440419.064 },
+        { y: "1969-07-20", t: "静海基地 · 人类的一小步", d: "阿波罗 11 号降落在静海。去月球车模式选『静海』着陆区, 亲自开过那片土地。", act: "moon" },
     { y: "1977-08-20", t: "旅行者 2 号启程", d: "一次 176 年一遇的行星排列窗口, 一台核动力唱片机, 一场至今未归的旅行。", act: "voyager" },
     { y: "1986-02-09", t: "哈雷彗星近日 · 乔托号迎击", d: "上一次哈雷回归。欧空局乔托号穿过彗发, 拍下人类第一张彗核照片。", jd: 2446471.3, focus: "Halley", scale: 1 },
     { y: "1997-04-01", t: "海尔-波普 · 世纪大彗星", d: "肉眼可见 18 个月, 彗核直径约 60 公里。北半球整个春天都在它的双尾下。", jd: 2450539.6, focus: "HaleBopp", scale: 1 },
     { y: "2012-06-06", t: "金星凌日 · 本世纪绝唱", d: "金星最后一次从日面爬过 —— 下一次是 2117 年 12 月。在北京的晨光里看那个小黑点。", sky: [39.90, 116.40, 2456084.5625] },
-    { y: "2017-08-21", t: "美国大日食", d: "横贯美国的全食带, 两亿人仰望。这里是怀俄明州卡斯珀的食甚时刻。", sky: [42.85, -106.32, 2457987.2394] },
+    { y: "2024-10-13", t: "筷子夹住火箭 · 星舰第五飞", d: "71 米高的超重助推器返回发射塔, 被两条机械臂在半空接住 —— 人类第一次'接住'一枚火箭。剧场按此剖面重演: 分离后跟随助推器直到入臂。", act: "launch", rocket: "starship", jd: 2460597.02 },
+        { y: "2016-11-03", t: "长征五号首飞 · 文昌", d: "中国最强火箭的第一次点火。8 台 YF-100 与 2 台 YF-77 同时咆哮, 849 吨离开海南的海岸线。进发射剧场, 从塔架看到入轨。", act: "launch", jd: 2457696.03 },
+        { y: "2017-08-21", t: "美国大日食", d: "横贯美国的全食带, 两亿人仰望。这里是怀俄明州卡斯珀的食甚时刻。", sky: [42.85, -106.32, 2457987.2394] },
     { y: "2017-10-14", t: "奥陌陌最近地球 · 第一位星际访客", d: "一根雪茄状的星际碎片以双曲线轨道掠过太阳后飞离 —— 人类第一次确认: 别的恒星系的东西, 真的会穿过我们家。它离去时的微弱加速至今没有定论。", jd: 2458040.9, focus: "1I", scale: 0 },
     { y: "2019-12-08", t: "鲍里索夫过近日点 · 第一颗星际彗星", d: "业余天文学家用自制望远镜逮到它。与奥陌陌不同, 它拖着标准的彗尾 —— 说明别的恒星系造彗星的配方, 和我们几乎一样。", jd: 2458826.05, focus: "2I", scale: 0 },
         { y: "2020-12-21", t: "木土大合 · 800 年最近", d: "冬至傍晚, 木星与土星在暮色中几乎贴成一颗星 —— 上一次这么近, 是 1226 年。", sky: [39.90, 116.40, 2459204.917] },
@@ -3770,7 +4969,7 @@
   ];
   let histSeen = {};
   try { histSeen = JSON.parse(localStorage.getItem("ss_hist") || "{}"); } catch (e) { histSeen = {}; }
-  function goHistory(i) {
+  function goHistory(i, noTheater) {
     const sc = HISTORY_SCENES[i];
     if (!sc) return;
     try { histSeen[sc.y] = 1; localStorage.setItem("ss_hist", JSON.stringify(histSeen)); } catch (e) { /* 忽略 */ }
@@ -3784,8 +4983,13 @@
       return;
     }
     if (sc.act === "moon") { window.open("moon.html", "_blank"); return; }
-    if (sc.act === "voyager") { startReplay("Voyager2"); return; }
+    if (sc.act === "voyager") {
+      if (noTheater || !window.parseGLBCore) { startReplay("Voyager2"); }
+      else { jd = 2443376.10; lnchEnter({ hist: true, rocket: "titan3e", chain: "Voyager2" }); }
+      return;
+    }
     if (sc.act === "carrington") { magEnter(true); return; }
+    if (sc.act === "launch") { if (sc.jd) jd = sc.jd; lnchEnter({ hist: true, rocket: sc.rocket, historical: sc.historical, apollo: sc.apollo }); return; }
     if (sc.act === "m1") {
       const d = window.DEEPSKY && window.DEEPSKY.find((x) => x.cn && x.cn.includes("蟹状"));
       if (d) aimAtDeepSky(d);
@@ -3802,7 +5006,9 @@
   /* ---------------- 放映厅: 历史名场面连播(跳过需开新页的场景) ---------------- */
   const CINEMA = { on: false, k: 0, t: 0, dwell: 16, order: [] };
   function cineOrder() {
-    return HISTORY_SCENES.map((sc, i) => i);   // 完全体: 17 幕全收录(地面观星/月面以嵌入放映)
+    const out = [];
+    for (let i = 0; i < HISTORY_SCENES.length; i += 1) if (HISTORY_SCENES[i].act !== "launch") out.push(i);
+    return out;   // 完全体: 除发射剧场(自有编排)外全收录, 地面观星/月面以嵌入放映
   }
   function cineShow(k) {
     const sc = HISTORY_SCENES[CINEMA.order[k]];
@@ -3815,7 +5021,7 @@
       fr.style.display = "block";
     } else {
       fr.style.display = "none";
-      goHistory(CINEMA.order[k]);
+      goHistory(CINEMA.order[k], true);
     }
     const bar = $("cineBar");
     bar.style.display = "block";
@@ -3939,6 +5145,16 @@
   }
 
   if (typeof window !== "undefined") {
+    window.__lnch = { LNCH, ROCKETS, tick: tickLaunch, dispose: lnchDispose, builtCount: () => Object.keys(LNCH.builtMap).length, table: cz5AscentTable, tableFor: (id) => ascentTable(ROCKETS[id].phys), boosterFor: (id) => f9BoosterTable(ascentTable(ROCKETS[id].phys), ROCKETS[id].booster.sepT, ROCKETS[id].booster.lzDr, ROCKETS[id].booster.opts), setRocket: (id) => { LNCH.rk = id; LNCH.cfg = ROCKETS[id]; LNCH.lat = ROCKETS[id].site.lat; LNCH.lon = ROCKETS[id].site.lon; LNCH.incAz = ROCKETS[id].az * D2R; LNCH.table = null; }, insertion: lnchInsertionState, enter: lnchEnter, exit: lnchExit, tc: lnchTC };
+    window.__sites = { SITES, dir: geoDirEcl, count: () => (siteBeacons ? siteBeacons.length : 0) };
+    window.__apollo = { A: APOLLO, tick: tickApollo, solve: tliSolve, tof: tliTofA };
+    window.__enc = { check: checkEncounter, EPOCHS: ENC_EPOCHS, seen: encSeen };
+    window.__probeEarth = () => {
+      const e1 = heliocentricKm(bodyByName.Earth.orbit_j2000, jd + 0.005);
+      const e0 = heliocentricKm(bodyByName.Earth.orbit_j2000, jd - 0.005);
+      return { r: worldKm.Earth ? worldKm.Earth.slice() : heliocentricKm(bodyByName.Earth.orbit_j2000, jd).slice(0, 3),
+               v: [(e1[0] - e0[0]) / 864, (e1[1] - e0[1]) / 864, (e1[2] - e0[2]) / 864] };
+    };
     window.__met = { peak: meteorPeakJdFull, refine: meteorPeakRefine, SHOWERS: METEOR_SHOWERS, sunLon: sunLonDeg };
     window.__ics = buildIcs;
     window.__cine = { CINEMA, start: cineStart, next: cineNext, stop: cineStop, order: cineOrder };
@@ -4844,6 +6060,9 @@
     ["apophis", "有惊无险", "查看阿波菲斯 2029 掠地"],
     ["visitor", "星际访客", "亲眼见过一位闯入太阳系的系外天体"],
     ["cinema", "放映厅", "连播看完全部历史名场面"],
+    ["launch", "点火起飞", "完整看完一次火箭发射入轨"],
+    ["fleet", "一支舰队", "看过三型不同火箭的发射"],
+    ["apollo_moon", "奔月", "把阿波罗载荷经 TLI 送进月球引力圈"],
     ["shadowplay", "双影凌木", "看到两枚卫星影子同时落在木星盘面"],
     ["probe", "第一推动", "在引力沙盒发射第一枚探针"],
     ["hohmann", "转移窗口", "发射一次霍曼转移"],
@@ -4951,9 +6170,142 @@
         stars3D = true;
         $("cosmoBtn").classList.add("active");
       }
+      if (p.get("pause") === "1") { playing = false; $("playBtn").textContent = "▶"; }
       const f = p.get("f");
       updateSystem();
       if (f && scenePos[f]) setFocus(f, true);
+      /* 贴地相机距(千 km): 信标/近地验收与分享 */
+      const dKm = Number(p.get("d"));
+      if (f && Number.isFinite(dKm) && dKm > 0) {
+        setTimeout(() => {
+          const t = controls.target;
+          const dir = camera.position.clone().sub(t).normalize();
+          camera.position.copy(t).addScaledVector(dir, dKm / 1000);
+          controls.update();
+        }, 600);
+      }
+      /* 调试: #dbg=sitecam&site=cz5 → 相机置于该站天顶望地心(经纬校验) */
+      if (p.get("dbg") === "sitecam") {
+        setTimeout(() => {
+          const st2 = SITES.find((x) => x.id === (p.get("site") || "cz5")) || SITES[0];
+          geoDirEcl(st2.lat, st2.lon, _geo6);
+          const eS2 = scenePos.Earth, R2 = 6371 / SCALE.sceneUnitKm;
+          camera.position.set(eS2[0] + _geo6[0] * R2 * 8, eS2[1] + _geo6[1] * R2 * 8, eS2[2] + _geo6[2] * R2 * 8);
+          controls.target.set(eS2[0], eS2[1], eS2[2]);
+          controls.update();
+        }, 1500);
+      }
+      /* 调试: #dbg=sites 附加站点自证面板(dot/显隐/屏幕坐标) */
+      if ((p.get("dbg") || "").indexOf("site") === 0) {
+        window.__errs = [];
+        window.addEventListener("error", (e) => { if (window.__errs.length < 4) window.__errs.push((e.message || "?") + " @" + (e.lineno || 0)); });
+        window.addEventListener("unhandledrejection", (e) => { if (window.__errs.length < 4) window.__errs.push("promise: " + e.reason); });
+        const dv = document.createElement("div");
+        dv.style.cssText = "position:fixed;right:8px;top:120px;z-index:9999;background:rgba(0,0,0,.82);color:#9fe8d8;font:11px/1.5 monospace;padding:8px 10px;border-radius:6px;white-space:pre";
+        document.body.appendChild(dv);
+        setInterval(() => {
+          const eS2 = scenePos.Earth;
+          if (!eS2 || !siteBeacons) { dv.textContent = "no beacons"; return; }
+          const cd = Math.hypot(camera.position.x - eS2[0], camera.position.y - eS2[1], camera.position.z - eS2[2]);
+          let tx = "站点自证 camD(R⊕)=" + (cd / (6371 / SCALE.sceneUnitKm)).toFixed(1) + " scale=" + scaleBlend.toFixed(2) + "\n";
+          if (APOLLO.on || APOLLO.state) tx += "阿波罗 " + APOLLO.state + (APOLLO.dv ? " dv=" + APOLLO.dv.toFixed(2) : "") + (APOLLO.minMoon < 1e12 ? " 月距min=" + (APOLLO.minMoon / 1e4).toFixed(1) + "万" : "") + "\n";
+          if (location.hash.indexOf("lnch2") > 0) {
+            const els = document.querySelectorAll("body *");
+            let dm = "";
+            for (const el of els) {
+              if (el.offsetWidth > 250 && el.offsetHeight > 250) {
+                const st = getComputedStyle(el);
+                if (st.display !== "none" && st.visibility !== "hidden" && (st.position === "fixed" || st.position === "absolute" || el.tagName === "IFRAME" || el.tagName === "CANVAS")) {
+                  dm += el.tagName + "#" + (el.id || el.className.toString().slice(0, 16)) + " " + el.offsetWidth + "x" + el.offsetHeight + " bg=" + st.backgroundColor.slice(0, 18) + " z=" + st.zIndex + "\n";
+                }
+              }
+            }
+            window.__domDump = dm;
+          }
+          if (LNCH.state !== "off" && LNCH.W && (location.hash.indexOf("lnch5") > 0)) {
+            let hits = "";
+            const camW = camera.position;
+            LNCH.W.updateWorldMatrix(true, true);
+            LNCH.W.traverse((ob) => {
+              if (!ob.isMesh || !ob.visible) return;
+              if (!ob.geometry.boundingSphere) { try { ob.geometry.computeBoundingSphere(); } catch (e) { return; } }
+              const bs = ob.geometry.boundingSphere;
+              _v3a.copy(bs.center).applyMatrix4(ob.matrixWorld);
+              const dC = _v3a.distanceTo(camW);
+              const sc = ob.getWorldScale(_v3b).x;
+              const rW = bs.radius * sc;
+              if (dC < rW * 1.6) {   // 相机在包围球附近/内部 → 盖屏候选
+                let nm = ob.name || "";
+                let pp = ob.parent;
+                while (pp && pp !== LNCH.W && !nm) { nm = pp.name || ""; pp = pp.parent; }
+                const col = ob.material && ob.material.color ? ob.material.color.getHexString() : "?";
+                hits += (nm || "anon") + " r=" + rW.toFixed(3) + " d=" + dC.toFixed(3) + " col=" + col + "\n";
+              }
+            });
+            window.__lnchHits = hits || "(无盖屏物)";
+            const cand = [];
+            const camW2 = camera.position;
+            _v3b.set(0, 0, -1).applyQuaternion(camera.quaternion);   // 视线
+            scene.traverse((ob) => {
+              if (!ob.visible || (!ob.isSprite && !ob.isMesh && !ob.isPoints)) return;
+              ob.getWorldPosition(_v3a);
+              const d2 = Math.max(_v3a.distanceTo(camW2), 1e-12);
+              _v3a.sub(camW2).normalize();
+              const fwd = _v3a.dot(_v3b);
+              let sz = 0;
+              if (ob.isSprite) sz = ob.getWorldScale(_lnchV1).x;
+              else if (ob.isPoints) sz = (ob.material && ob.material.sizeAttenuation) ? ob.material.size * (ob.getWorldScale(_lnchV1).x || 1) : 0;
+              else { if (!ob.geometry.boundingSphere) { try { ob.geometry.computeBoundingSphere(); } catch (e) { return; } } sz = (ob.geometry.boundingSphere ? ob.geometry.boundingSphere.radius : 0) * (ob.getWorldScale(_lnchV1).x || 1); }
+              const ang = sz / d2;
+              if (fwd > 0.2 && ang > 0.15) cand.push({ ang, t: (ob.isSprite ? "SPR" : ob.isPoints ? "PTS" : "M") + " " + (ob.name || "") + " c=" + (ob.material && ob.material.color ? ob.material.color.getHexString() : "?") + " a=" + ang.toFixed(1) + " d=" + d2.toExponential(1) });
+            });
+            cand.sort((x, y) => y.ang - x.ang);
+            hits = "calls=" + renderer.info.render.calls + " 前视大物:\n" + cand.slice(0, 10).map((c) => c.t).join("\n") + "\n";
+            window.__lnchHits += hits;
+          }
+          if (LNCH.state !== "off" && LNCH.W) {
+            tx += "剧场 state=" + LNCH.state + " t=" + LNCH.t.toFixed(0) + "\n";
+            tx += "dome.op=" + (LNCH.dome ? LNCH.dome.material.opacity.toFixed(3) : "-") + " grd=" + (LNCH.ground ? LNCH.ground.visible : "-") + "\n";
+            const cp = camera.position;
+            tx += "cam=(" + cp.x.toFixed(0) + "," + cp.y.toFixed(0) + "," + cp.z.toFixed(0) + ") near=" + camera.near + "\n";
+            let big = "";
+            LNCH.W.traverse((ob) => {
+              if (ob.visible && ob.geometry && ob.geometry.boundingSphere === null) { try { ob.geometry.computeBoundingSphere(); } catch (e) {} }
+              if (ob.visible && ob.geometry && ob.geometry.boundingSphere && ob.geometry.boundingSphere.radius > 30000) {
+                big += (ob.name || ob.type) + ":" + ob.geometry.boundingSphere.radius.toFixed(0) + " op=" + (ob.material && ob.material.opacity !== undefined ? ob.material.opacity.toFixed(2) : "?") + " vis=" + ob.visible + "\n";
+              }
+            });
+            tx += big;
+          if (window.__domDump) tx += window.__domDump;
+          if (window.__lnchHits) tx += "盖屏候选:\n" + window.__lnchHits;
+          if (window.__errs && window.__errs.length) tx += "JS异常:\n" + window.__errs.join("\n") + "\n";
+          }
+          for (const b of siteBeacons) {
+            geoDirEcl(b.st.lat, b.st.lon, _sbD);
+            const dot = (_sbD[0] * (camera.position.x - eS2[0]) + _sbD[1] * (camera.position.y - eS2[1]) + _sbD[2] * (camera.position.z - eS2[2])) / cd;
+            _v3a.set(b.spr.position.x, b.spr.position.y, b.spr.position.z).project(camera);
+            tx += b.st.id.padEnd(9) + " dot=" + dot.toFixed(2).padStart(5) + " vis=" + (b.spr.visible ? 1 : 0) + " scr=" + _v3a.x.toFixed(2) + "," + _v3a.y.toFixed(2) + "\n";
+          }
+          dv.textContent = tx;
+        }, 1000);
+      }
+      /* 深链直进发射剧场: #lnch=saturn5&apollo=1&hist=1&lt=90(进场后快进到 T+lt 秒) */
+      const lr = p.get("lnch");
+      if (lr && ROCKETS[lr]) {
+        setTimeout(() => {
+          lnchEnter({ rocket: lr, apollo: p.get("apollo") === "1", historical: p.get("hist") === "1" });
+          const lt = Number(p.get("lt"));
+          if (Number.isFinite(lt) && lt > 0) {
+            const fwd = setInterval(() => {
+              if (LNCH.state === "off") { clearInterval(fwd); return; }
+              if (LNCH.state !== "load") {
+                if (LNCH.t >= lt) { clearInterval(fwd); return; }
+                tickLaunch(0.5 / (LNCH.tc || 1));
+              }
+            }, 8);
+          }
+        }, 900);
+      }
     } catch (e) { console.warn("深链解析失败", e); }
   }
   /* ---------------- 摄影模式 ---------------- */
@@ -5024,6 +6376,7 @@
     for (const sat of SATELLITES) idx.push({ n: sat.cn, sub: sat.name, t: "卫星", act: () => { stopTour(); setFocus(sat.name, false); } });
     for (const c of COMETS) idx.push({ n: c.cn, sub: c.eng || c.name, t: "彗星", act: () => { stopTour(); setFocus(c.name, false); } });
     for (const c of SPACECRAFT) idx.push({ n: c.cn, sub: c.name, t: "航天器", act: () => { stopTour(); setFocus(c.name, false); } });
+    for (const st of SITES) idx.push({ n: st.cn, sub: ROCKETS[st.id].cn + " · 点击进发射剧场", t: "发射场", act: () => { stopTour(); lnchEnter({ rocket: st.id }); } });
     for (const k of namedStars) {
       const ly = (starDistPc(k.plx) * 3.26156);
       idx.push({ n: k.cn, sub: `${ly < 100 ? ly.toFixed(1) : Math.round(ly)} 光年`, t: "恒星", act: () => flyToStar(k) });
@@ -5643,6 +6996,7 @@
     { el: "sbxBtn", t: "引力沙盒 · 玩法", x: "开启<b>投放模式</b>后: 在黄道面<b>按下</b>=定位置, <b>拖拽</b>=给速度(实时显示圆轨道/逃逸参考), <b>松开</b>=发射;轻点=直接圆轨道。探针受太阳+八大行星真实引力——扔到木星旁试试引力弹弓。" },
     { el: "launchBtn", t: "霍曼挑战 · 规则", x: "把探针送到火星: ①点<b>下个窗口</b>(自动对相位并代入理论 Δv) ②微调 Δv ③<b>发射</b>。按与火星最近距离评星, ★★★<300 万 km。窗口不对, 怎么加速都到不了——会合周期 780 天。" },
     { el: "vgBtn", t: "人类足迹", x: "旅行者与新视野号的 JPL 实测轨迹已内置。点这里回放 1977—1989 <b>四连引力弹弓</b>, 右下角速度曲线看它如何从行星公转里「偷」动能。" },
+    { el: null, t: "发射场就在地球上", x: "切到<b>真实尺度</b>贴近地球: 七座发射场信标常驻球面正确经纬度, 随地球自转。<b>点信标直接进发射剧场</b>;土星五号入轨后还会等 TLI 窗口奔月——抵月后一键开月球车。时间轴拨到历史发射时刻(如 1969-07-16), 还会有偶遇提示。" },
     { el: "helpBtn", t: "开始探索!", x: "快捷键与操作说明都在「?」里, 想重看引导也从那里打开。别忘了月球信息卡里还有一辆月球车等你开。" }
   ];
   let gdStep = 0, gdActive = false;
@@ -5796,6 +7150,10 @@
     pointerDownAt = null;
     if (dx * dx + dy * dy < 20) {
       const hit = pickAt(e.clientX, e.clientY);
+      if (hit && hit.indexOf("site_") === 0) {
+        const st2 = SITES.find((x) => x.nm === hit);
+        if (st2) { lnchEnter({ rocket: st2.id }); return; }
+      }
       if (hit) { setFocus(hit, false); return; }
       if (star3DBlend > 0.3) {
         const ds = pickDeepSky(e.clientX, e.clientY);
@@ -6037,6 +7395,11 @@
     $("repGlobal").addEventListener("click", () => replaySetView("global"));
     deepTimeActiveOff = () => { if (deepTime) setDeepTime(false); };
     $("tourBtn").addEventListener("click", () => { tour ? stopTour() : startTour(); });
+    window.__setSpeed = (v, play) => {   // 程序化设挡: 剧场/任务链节奏管理
+      daysPerSecond = v;
+      if (play !== undefined) { playing = play; $("playBtn").textContent = play ? "⏸" : "▶"; }
+      for (const b of $("speedGroup").children) b.classList.toggle("active", Number(b.dataset.v) === v);
+    };
     // 速度按钮(深时挡位追加 百年/千年每秒)
     function buildSpeedButtons() {
       const list = deepTime
@@ -6047,6 +7410,7 @@
       list.forEach((sp, i) => {
         const btn = document.createElement("button");
         btn.textContent = sp.label;
+        btn.dataset.v = sp.v;
         if (sp.v === daysPerSecond || (daysPerSecond === undefined && i === 2)) btn.classList.add("active");
         btn.addEventListener("click", () => {
           daysPerSecond = sp.v;
@@ -6303,6 +7667,52 @@
     $("gateEnter").addEventListener("click", introEnterClicked);
     $("evtIcs").addEventListener("click", exportIcs);
     $("histPlayAll").addEventListener("click", cineStart);
+    $("lnchBtn").addEventListener("click", () => lnchEnter());
+    $("lnchBtnT").addEventListener("click", () => lnchEnter({ rocket: "titan3e" }));
+    $("lnchBtnS").addEventListener("click", () => lnchEnter({ rocket: "saturn5", apollo: true }));
+    $("lnchBtnF").addEventListener("click", () => lnchEnter({ rocket: "falcon9" }));
+    $("lnchBtnN").addEventListener("click", () => lnchEnter({ rocket: "n1" }));
+    $("lnchBtnX").addEventListener("click", () => lnchEnter({ rocket: "exp1" }));
+    $("lnchBtnSS").addEventListener("click", () => lnchEnter({ rocket: "starship" }));
+    $("hohmannStatus").addEventListener("click", (e) => {
+      if (e.target && e.target.id === "apolloMoonBtn") window.open("moon.html", "_blank");
+      if (e.target && e.target.id === "apSpdBtn" && window.__setSpeed) {
+        window.__setSpeed(1 / 24, true);
+        e.target.textContent = "已加速: 时/秒";
+      }
+    });
+    $("lnchSpd").addEventListener("click", (e) => {
+      e.stopPropagation();
+      const seq2 = [["real", 1, "实时 1:1"], ["real", 2, "剧场 2×"], ["real", 4, "剧场 4×"], ["real", 8, "剧场 8×"], ["fast", 1, "导演节奏 ⏩"]];
+      LNCH._spdIdx = ((LNCH._spdIdx || 0) + 1) % seq2.length;
+      const c2 = seq2[LNCH._spdIdx];
+      LNCH.spdMode = c2[0]; LNCH.spdMul = c2[1];
+      $("lnchSpd").textContent = c2[2];
+    });
+    $("lnchSkipBtn").addEventListener("click", (e) => {
+      e.stopPropagation();
+      if (LNCH.state === "fly" || LNCH.state === "pre") LNCH.skipReq = true;
+    });
+    $("lnchCamBtn").addEventListener("click", (e) => {
+      e.stopPropagation();
+      const seq = ["auto", "onboard", "top"];
+      const nm2 = { auto: "机位: 导播", onboard: "机位: 箭载", top: "机位: 上空" };
+      LNCH.camMode = seq[(seq.indexOf(LNCH.camMode || "auto") + 1) % 3];
+      $("lnchCamBtn").textContent = nm2[LNCH.camMode];
+    });
+    $("encGo").addEventListener("click", () => {
+      if (!encCur) return;
+      const e = encCur;
+      encSeen[e.jd] = 1;
+      $("encHint").classList.remove("show");
+      jd = e.jd;
+      lnchEnter({ hist: true, rocket: e.rocket, historical: e.historical, chain: e.chain, apollo: e.apollo });
+    });
+    $("encClose").addEventListener("click", () => {
+      if (encCur) encSeen[encCur.jd] = 1;
+      $("encHint").classList.remove("show");
+      encCur = null;
+    });
     if (typeof window.addEventListener === "function") window.addEventListener("keydown", (e) => {
       if (!CINEMA.on) return;
       if (e.code === "Space") { e.preventDefault(); cineNext(); }
@@ -6416,6 +7826,9 @@
       }
     }
     tickIntro(dt);
+    updateSiteBeacons();
+    tickLaunch(dt);
+    tickApollo();
     tickCinema(dt);
     updateMeteorBurst();
     tickReplay();
@@ -6425,11 +7838,12 @@
     if (vgActive) drawVoyagerChart();
     tickFlight(dt);
     tickTween(dt);
-    controls.update();
+    if (LNCH.state === "off" || LNCH.state === "load") controls.update();   // 剧场接管相机时 OrbitControls 让位(阶段38: 机位被 update 覆盖 → 高空白盘)
     if (!(transMoving && _lineParity === 1)) {
       updateRadar(dt);
       flushLabels2D();
     }
+    bloomPass.strength = (LNCH.state !== "off" && LNCH.state !== "load") ? 0.1 : 0.55;   // 剧场压 bloom: 羽流白棚(阶段38)
     composer.render();
     if (snapRequest) saveSnapshot();
 
@@ -6482,7 +7896,7 @@
       fpsFrames = 0;
       fpsClock = now;
     }
-    if (hudClock > 0.5) { hudClock = 0; refreshInfo(); }
+    if (hudClock > 0.5) { hudClock = 0; refreshInfo(); checkEncounter(); }
   }
 
   /* ---------------- 启动 ---------------- */
@@ -6510,6 +7924,16 @@
     restoreProbes();
     if (!introBypass()) introStart();
     if (typeof location !== "undefined" && !eventsReady) scanPump();   // 门内/进场即后台推算天象
+    if (typeof location !== "undefined" && !window.AST_REAL) {   // 分层加载: 程序化带先亮场, 19139 颗真实带后台到货热替换
+      setTimeout(() => {
+        try {
+          const sc2 = document.createElement("script");
+          sc2.src = "asteroids_real.js";
+          sc2.onload = () => { try { buildRealBelt(); } catch (e2) { /* 忽略 */ } };
+          document.body.appendChild(sc2);
+        } catch (e2) { /* 桩 */ }
+      }, 1500);
+    }
     if (window.addEventListener) window.addEventListener("beforeunload", saveProbes);
     try { renderer.compile(scene, camera); } catch (e) { /* 预编译尽力而为 */ }
     requestAnimationFrame(animate);

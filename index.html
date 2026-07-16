@@ -330,6 +330,12 @@
     #histClose { width: 26px; height: 26px; padding: 0; font-size: 13px; border-radius: 50%; }
     #histPlayAll, #evtIcs { padding: 3px 10px; font-size: 12px; border-radius: 10px; }
     #cineFrame { position: fixed; inset: 0; width: 100%; height: 100%; border: 0; z-index: 55; background: #000; display: none; pointer-events: none; }
+    #lnchHud { position: fixed; left: 50%; top: 14px; transform: translateX(-50%); z-index: 62; padding: 9px 20px; border-radius: 12px; text-align: center; display: none; }
+    #lnchHud.show { display: block; }
+    #lnchHud b { font-size: 14px; letter-spacing: .12em; color: #ffd9a0; }
+    #lnchHud #lnchRow { display: flex; gap: 18px; justify-content: center; margin-top: 4px; font-size: 12px; color: #b8c4d8; }
+    #lnchHud i { font-style: normal; font-variant-numeric: tabular-nums; color: #eef3fb; margin-left: 4px; }
+    #lnchHud em { display: block; font-style: normal; font-size: 10.5px; color: #7d8aa0; margin-top: 4px; }
     #cineBar { position: fixed; left: 50%; bottom: 88px; transform: translateX(-50%); z-index: 60; max-width: min(680px, 92vw); padding: 10px 18px; border-radius: 12px; text-align: center; display: none; }
     #cineBar b { display: block; font-size: 15px; margin-bottom: 3px; letter-spacing: .06em; }
     #cineBar span { font-size: 12.5px; color: #b8c4d8; line-height: 1.5; }
@@ -549,9 +555,13 @@
       <div class="hintText" id="galHint" style="display:none">太阳以 ~233 km/s 奔向天鹅座, 每年拖着全家跑 49 AU。黄道面与前进方向倾斜约 60°, 行星半年领先太阳、半年落后 —— 真实形态是<b>斜螺旋</b>, 不是网上流传的"漩涡"。播放时间, 看弹簧被拧出来。</div>
       <div class="gtitle">引力沙盒 · 受摄 N 体</div>
       <div class="sbxRow">
-        <button id="sbxBtn">投放模式</button>
-        <button id="sbxClear">清空探针</button>
+        <button id="sbxBtn" style="flex:1">投放模式</button>
+        <button id="sbxClear" style="flex:1">清空探针</button>
       </div>
+      <div class="sbxRow"><button id="lnchBtn" style="flex:1">长征五号 · 文昌发射</button></div>
+      <div class="sbxRow"><button id="lnchBtnT" style="flex:1">泰坦IIIE</button><button id="lnchBtnS" style="flex:1">土星五号</button></div>
+      <div class="sbxRow"><button id="lnchBtnF" style="flex:1">猎鹰9</button><button id="lnchBtnN" style="flex:1">N1</button><button id="lnchBtnX" style="flex:1">远征者</button></div>
+      <div class="sbxRow"><button id="lnchBtnSS" style="flex:1">星舰 · 筷子回收</button></div>
       <div class="hintText" id="sbxHint" style="display:none">黄道面上<b>按下</b>定位置, <b>拖拽</b>给速度, 松开发射。轻点 = 该处圆轨道。探针受太阳+八大行星实时引力(RK4 自适应步长)。</div>
       <div id="probeList"></div>
       <div class="gtitle">霍曼挑战 · 地球 → 火星</div>
@@ -613,6 +623,7 @@
   <div id="achToast" class="glass"><b>成就解锁</b><span id="achToastText"></span></div>
 
   <iframe id="cineFrame" title="放映厅嵌入现场"></iframe>
+  <div id="lnchHud" class="glass"><b id="lnchPhase">准备</b> <button id="lnchSpd" style="font-size:11px;padding:2px 10px;margin-left:8px;vertical-align:2px">实时 1:1</button><button id="lnchCamBtn" style="font-size:11px;padding:2px 10px;margin-left:6px;vertical-align:2px">机位: 导播</button><div id="lnchRow"><span>T<i id="lnchT">-00:05</i></span><span>高度 <i id="lnchAlt">0 m</i></span><span>速度 <i id="lnchV">0 m/s</i></span></div><button id="lnchSkipBtn" style="font-size:11px;padding:2px 10px;margin-left:6px;vertical-align:2px">跳过 ⏭ 直接入轨</button><em>Esc 同效 · 拖动可环视</em></div>
   <div id="cineBar" class="glass"><b id="cineTitle"></b><span id="cineText"></span><i>空格 下一幕 · Esc 退出</i></div>
   <div id="histModal" class="glass">
     <div id="histHead"><b>历史名场面 · 一键穿越</b><span id="histCount"></span><button id="histPlayAll" title="按时间顺序连播全部名场面">▶ 连播</button><button id="histClose" aria-label="关闭历史名场面">✕</button></div>
@@ -623,7 +634,7 @@
   <div id="atmoTint"></div>
   <div id="lcHud" class="glass"></div>
 
-  <div id="radarWrap" class="glass">
+    <div id="radarWrap" class="glass">
     <div id="radarHead"><b>雷达 · 太阳系全景</b><button id="radarX" title="展开全屏 / 收回" aria-label="展开或收回雷达">⤢</button></div>
     <canvas id="radarCv" width="240" height="240"></canvas>
   </div>
@@ -669,6 +680,7 @@
 
   <div id="hintStack">
   <div id="deepHint" class="modeHint glass">深时模式:±5 万年 —— 恒星按真实自行漂移, 星座缓慢变形;地轴 25772 年岁差, <b>约 1.2 万年后织女星接任北极星</b>。±200 年外行星轨道为示意外推;<b>米兰科维奇循环</b>: 黄赤交角 4.1 万年摆动(22.1°~24.5°), 地球轨道偏心率十万年"呼吸"。</div>
+  <div id="encHint" class="modeHint glass"><span id="encText"></span> <button id="encGo" style="margin-left:8px;padding:2px 10px;font-size:12px">进剧场 ▶</button><button id="encClose" style="margin-left:4px;padding:2px 8px;font-size:12px">×</button></div>
   <div id="cosmoHint" class="modeHint glass">星际视角:恒星按依巴谷视差展开真实距离(对数压缩), 滚轮拉远飞出太阳系 —— <b>看太阳缩成群星中的一颗黄矮星</b>。</div>
   </div>
 
@@ -710,28 +722,30 @@
     <kbd>/</kbd> 搜索直达一切 · <kbd>空格</kbd> 播放/暂停<br>
     <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd><kbd>Q</kbd><kbd>E</kbd> 飞行(星际下即光年巡航)· <kbd>Shift</kbd> 加速<br>
     <kbd>1</kbd>–<kbd>9</kbd> 快速聚焦 · 时间轴圆点 — 大事件<br>
+    真实尺度贴近地球 — 七座发射场信标, 点击进剧场;土星五号入轨后自动奔月<br>
     天象=日历 · 深时=±5万年 · 星际=飞出太阳系<br>
     右下雷达可点击聚焦 · <kbd>⤢</kbd> 全屏 <kbd>Esc</kbd> 收回<br>
     搜"奥陌陌" — 星际访客双曲轨道 · 小行星带 19,139 颗全真实<br>
+    沙盒三枚火箭 — 长五/泰坦IIIE/土星五号, 从塔架看到入轨<br>
     历史名场面 <kbd>▶ 连播</kbd> — 17 幕放映厅 · 日历可导出 .ics<br>
     聚焦木星细看 — 伽利略卫星影子实时投在盘面<br>
     光速巡航/地面观星/成就任务 — 都在左侧面板
   </div>
 
   <script src="./vendor/three-bundle.min.js"></script>
-  <script src="./assets_textures.js"></script>
-  <script src="./star_catalog.js"></script>
-  <script src="./spacecraft_data.js"></script>
-  <script src="./star_names.js"></script>
-  <script src="./constellations.js"></script>
-  <script src="./star_rv.js"></script>
-  <script src="./exoplanets.js"></script>
-  <script src="./deepsky_data.js"></script>
-  <script src="./deepsky.js"></script>
-  <script src="./solar_system_data.js"></script>
-  <script src="./visitors_data.js"></script>
-  <script src="./asteroids_real.js"></script>
-  <script src="./app.js"></script>
+  <script src="./assets_textures.js?v=50"></script>
+  <script src="./star_catalog.js?v=50"></script>
+  <script src="./spacecraft_data.js?v=50"></script>
+  <script src="./star_names.js?v=50"></script>
+  <script src="./constellations.js?v=50"></script>
+  <script src="./star_rv.js?v=50"></script>
+  <script src="./exoplanets.js?v=50"></script>
+  <script src="./deepsky_data.js?v=50"></script>
+  <script src="./deepsky.js?v=50"></script>
+  <script src="./solar_system_data.js?v=50"></script>
+  <script src="./visitors_data.js?v=50"></script>
+  <script src="./glb_parser.js?v=50"></script>
+  <script src="./app.js?v=50"></script>
   <script>if ("serviceWorker" in navigator && location.protocol.indexOf("http") === 0) navigator.serviceWorker.register("./sw.js").catch(function () {});</script>
 </body>
 </html>

@@ -6,7 +6,7 @@
  * ========================================================================= */
 "use strict";
 
-const VER = "v39-1";                    // ← 发布新版本时,改这里
+const VER = "v51";                    // ← 发布新版本时,改这里
 const CACHE_PREFIX = "rt-solar-";
 const CACHE_NAME = CACHE_PREFIX + VER;
 
@@ -21,29 +21,29 @@ const PRECACHE = [
   "./moon.html",
   "./sky.html",
   // —— 脚本 ——
-  "./app.js?v=50",
-  "./assets_textures.js?v=50",
-  "./asteroids_real.js?v=50",
-  "./glb_parser.js?v=50",
-  "./cz5_glb.js?v=50",
-  "./t3e_glb.js?v=50",
-  "./s5_glb.js?v=50",
-  "./f9_glb.js?v=50",
-  "./n1_glb.js?v=50",
-  "./exp1_glb.js?v=50",
-  "./ss_glb.js?v=50",
-  "./constellations.js?v=50",
-  "./deepsky.js?v=50",
-  "./deepsky_data.js?v=50",
-  "./exoplanets.js?v=50",
-  "./moon.js?v=50",
-  "./sky.js?v=50",
-  "./solar_system_data.js?v=50",
-  "./spacecraft_data.js?v=50",
-  "./star_catalog.js?v=50",
-  "./star_names.js?v=50",
-  "./star_rv.js?v=50",
-  "./visitors_data.js?v=50",
+  "./app.js?v=51",
+  "./assets_textures.js?v=51",
+  "./asteroids_real.js?v=51",
+  "./glb_parser.js?v=51",
+  "./cz5_glb.js?v=51",
+  "./t3e_glb.js?v=51",
+  "./s5_glb.js?v=51",
+  "./f9_glb.js?v=51",
+  "./n1_glb.js?v=51",
+  "./exp1_glb.js?v=51",
+  "./ss_glb.js?v=51",
+  "./constellations.js?v=51",
+  "./deepsky.js?v=51",
+  "./deepsky_data.js?v=51",
+  "./exoplanets.js?v=51",
+  "./moon.js?v=51",
+  "./sky.js?v=51",
+  "./solar_system_data.js?v=51",
+  "./spacecraft_data.js?v=51",
+  "./star_catalog.js?v=51",
+  "./star_names.js?v=51",
+  "./star_rv.js?v=51",
+  "./visitors_data.js?v=51",
   "./vendor/three-bundle.min.js",
   // —— 清单与图像 ——
   "./manifest.json",
